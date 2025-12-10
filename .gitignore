@@ -1,2 +1,4 @@
 /.env
 /rag_test_doc.txt
+/.venv/
+/.idea/

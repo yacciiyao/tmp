@@ -16,7 +16,6 @@ from app.routers import (
     agent_router,
     brand_router,
     project_router,
-    file_router,
     amazon_router,
 )
 
@@ -49,7 +48,6 @@ app.include_router(model_router.router)
 # app.include_router(agent_router.router)
 # app.include_router(brand_router.router)
 # app.include_router(project_router.router)
-# app.include_router(file_router.router)
 # app.include_router(amazon_router.router)
 
 

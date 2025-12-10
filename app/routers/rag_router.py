@@ -5,9 +5,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.deps.auth import get_current_admin
 from application.rag.dto import (
     CorpusCreateRequest,
     CorpusResponse,
@@ -21,6 +22,7 @@ from application.rag.dto import (
 from application.rag.rag_service import RAGService
 from application.rag.ingestion_service import IngestionService, IngestionResult
 from application.rag.query_service import RAGQueryService
+from domain.user import UserPublic
 from infrastructure.db.deps import get_db
 
 router = APIRouter(prefix="/rag", tags=["rag"])
@@ -48,6 +50,7 @@ def get_rag_query_service(db: AsyncSession = Depends(get_db)) -> RAGQueryService
 async def create_corpus(
     req: CorpusCreateRequest,
     svc: RAGService = Depends(get_rag_service),
+    current_admin: UserPublic = Depends(get_current_admin),
 ) -> CorpusResponse:
     """
     创建知识库（后台管理使用）。
@@ -61,6 +64,7 @@ async def list_corpora(
     limit: int = 50,
     offset: int = 0,
     svc: RAGService = Depends(get_rag_service),
+    current_admin: UserPublic = Depends(get_current_admin),
 ) -> CorpusListResponse:
     """
     列出知识库，可按 owner_id 过滤。
@@ -72,6 +76,7 @@ async def list_corpora(
 async def get_corpus(
     corpus_id: int,
     svc: RAGService = Depends(get_rag_service),
+    current_admin: UserPublic = Depends(get_current_admin),
 ) -> CorpusResponse:
     """
     获取单个知识库详情。
@@ -90,6 +95,7 @@ async def create_document(
     corpus_id: int,
     req: DocumentCreateRequest,
     svc: RAGService = Depends(get_rag_service),
+    current_admin: UserPublic = Depends(get_current_admin),
 ) -> DocumentResponse:
     """
     创建文档记录（只登记来源信息，不做解析与入库）。
@@ -108,6 +114,7 @@ async def list_documents(
     limit: int = 100,
     offset: int = 0,
     svc: RAGService = Depends(get_rag_service),
+    current_admin: UserPublic = Depends(get_current_admin),
 ) -> DocumentListResponse:
     """
     列出某个知识库下的文档。
@@ -119,6 +126,7 @@ async def list_documents(
 async def get_document(
     doc_id: int,
     svc: RAGService = Depends(get_rag_service),
+    current_admin: UserPublic = Depends(get_current_admin),
 ) -> DocumentResponse:
     """
     获取单个文档详情。
@@ -131,11 +139,28 @@ async def get_document(
 
 # ====================== 入库（Ingestion）相关 ======================
 
+@router.post(
+    "/corpora/{corpus_id}/upload_and_ingest",
+    response_model=DocumentResponse,
+)
+async def upload_and_ingest_document(
+    corpus_id: int,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_admin: UserPublic = Depends(get_current_admin),
+):
+    svc = RAGService(db)
+    return await svc.upload_and_ingest_document(
+        corpus_id=corpus_id,
+        uploader_id=current_admin.id,
+        upload=file,
+    )
 
 @router.post("/documents/{doc_id}/ingest", response_model=IngestionResult)
 async def ingest_document(
     doc_id: int,
     ingestion_svc: IngestionService = Depends(get_ingestion_service),
+    current_admin: UserPublic = Depends(get_current_admin),
 ) -> IngestionResult:
     """
     触发单个文档的 RAG 入库流程：
@@ -155,6 +180,7 @@ async def ingest_document(
 async def rag_query(
     req: RAGQueryRequest,
     svc: RAGQueryService = Depends(get_rag_query_service),
+    current_admin: UserPublic = Depends(get_current_admin),
 ) -> RAGQueryResponse:
     """
     调试用 RAG 检索接口：

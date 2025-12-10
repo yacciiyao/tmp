@@ -2,10 +2,6 @@
 # @File: deepseek_client.py
 # @Author: yaccii
 # @Description:
-# -*- coding: utf-8 -*-
-# @File: infrastructure/llm/deepseek_client.py
-# @Author: yaccii
-# @Description: DeepSeek 客户端（当前基于 OpenAI 兼容协议）
 
 from __future__ import annotations
 

@@ -1,13 +1,8 @@
-# -*- coding: utf-8 -*-
-# @File: infrastructure/repositories/rag_repository.py
-# @Author: yaccii
-# @Description: RAG 相关仓储：Corpus / Document / Chunk
-
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select, update
+from sqlalchemy import Select, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.db.models.rag_orm import (
@@ -30,8 +25,26 @@ class RAGRepository:
     async def get_corpus(self, corpus_id: int) -> Optional[RAGCorpusORM]:
         return await self.db.get(RAGCorpusORM, corpus_id)
 
-    async def list_corpora(self) -> List[RAGCorpusORM]:
-        stmt = select(RAGCorpusORM).order_by(RAGCorpusORM.id.desc())
+    async def list_corpora(
+        self,
+        *,
+        owner_id: Optional[int] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> List[RAGCorpusORM]:
+        """
+        可按 owner_id 过滤，并支持 limit/offset 分页。
+        """
+        stmt: Select = select(RAGCorpusORM)
+        if owner_id is not None:
+            stmt = stmt.where(RAGCorpusORM.owner_id == owner_id)
+
+        stmt = (
+            stmt.order_by(RAGCorpusORM.id.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
@@ -86,12 +99,17 @@ class RAGRepository:
 
     async def list_documents_by_corpus(
         self,
+        *,
         corpus_id: int,
+        limit: int = 100,
+        offset: int = 0,
     ) -> List[RAGDocumentORM]:
-        stmt = (
+        stmt: Select = (
             select(RAGDocumentORM)
             .where(RAGDocumentORM.corpus_id == corpus_id)
             .order_by(RAGDocumentORM.id.desc())
+            .offset(offset)
+            .limit(limit)
         )
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
@@ -151,7 +169,7 @@ class RAGRepository:
     # ---------------- Chunk（目前只在 Ingestion 用） ----------------
 
     async def get_chunks_by_doc(self, doc_id: int) -> List[RAGChunkORM]:
-        stmt = (
+        stmt: Select = (
             select(RAGChunkORM)
             .where(RAGChunkORM.doc_id == doc_id)
             .order_by(RAGChunkORM.chunk_index.asc())
