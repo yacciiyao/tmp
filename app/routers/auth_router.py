@@ -63,6 +63,29 @@ async def login(
     token = _auth_service.create_access_token_for_user(user)
     return TokenResponse(access_token=token)
 
+class LoginJSONRequest(BaseModel):
+    username: str
+    password: str
+
+
+@router.post("/login-json", response_model=TokenResponse)
+async def login_json(
+    body: LoginJSONRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    user = await _auth_service.authenticate(
+        db=db,
+        username=body.username,
+        password=body.password,
+    )
+    if not user:
+        raise AppError(
+            code="auth.invalid_credentials",
+            message="Invalid username or password",
+            http_status=401,
+        )
+    token = _auth_service.create_access_token_for_user(user)
+    return TokenResponse(access_token=token)
 
 @router.get("/me", response_model=MeResponse)
 async def get_me(

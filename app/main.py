@@ -5,92 +5,118 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI, APIRouter
-from fastapi.middleware.cors import CORSMiddleware
-from starlette.staticfiles import StaticFiles
-from starlette.responses import RedirectResponse
+from importlib import import_module
+from typing import Any, Optional
 
+from fastapi import APIRouter, FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.responses import JSONResponse, RedirectResponse
+from starlette.staticfiles import StaticFiles
+
+from application.auth.auth_service import AuthService
+from application.common.errors import AppError
 from infrastructure import mlogger
 from infrastructure.config import settings
-from infrastructure.db.base import init_db, AsyncSessionFactory
+from infrastructure.db.base import AsyncSessionFactory, init_db
 
-# 业务服务：默认管理员
-from application.auth.auth_service import AuthService
 
-# 业务路由：逐个显式导入，避免 __init__ 重导出带来的不确定性
-from app.routers.auth_router import router as auth_router
-from app.routers.chat_router import router as chat_router
-from app.routers.rag_router import router as rag_router
-from app.routers.model_router import router as model_router
-# 如存在以下路由文件则会成功导入，若你的项目尚未提供，可先注释
+def _include_router_safely(
+    api: APIRouter,
+    module_path: str,
+    router_attr: str = "router",
+    prefix: str = "",
+    tags: Optional[list[str]] = None,
+) -> None:
+    """
+    - 避免因为“某个 router 文件缺失/导入失败”导致整个应用启动失败
+    - 必要模块仍建议在 CI 中保证存在；这里是运行期的韧性兜底
+    """
+    try:
+        mod = import_module(module_path)
+        router = getattr(mod, router_attr)
+        api.include_router(router, prefix=prefix, tags=tags)
+        mlogger.info("App", "router_loaded", module=module_path)
+    except Exception as e:
+        mlogger.warning("App", "router_skipped", module=module_path, error=str(e))
 
-# ---------------------------------------------------------------------
 
-app = FastAPI(
-    title="Multi-Agent Hub",
-    version="0.1.0",
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
-    openapi_url="/api/openapi.json",
-)
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title="Multi-Agent Hub",
+        version="0.1.0",
+        docs_url="/api/docs",
+        redoc_url="/api/redoc",
+        openapi_url="/api/openapi.json",
+    )
 
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins or ["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    # ---------- Global error handler ----------
+    @app.exception_handler(AppError)
+    async def _app_error_handler(_req: Request, exc: AppError):
+        return JSONResponse(status_code=exc.http_status, content=exc.to_response().model_dump())
 
-# 静态资源：前端页面
-app.mount("/web", StaticFiles(directory="web"), name="static")
+    # ---------- CORS ----------
+    origins = settings.cors_origins or []
+    # 若允许 "*"，则必须关闭 allow_credentials（否则浏览器拒绝）
+    allow_credentials = settings.cors_allow_credentials if origins != ["*"] else False
 
-# 统一 API 前缀
-api = APIRouter(prefix="/api")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins if origins else [],
+        allow_credentials=allow_credentials,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-# 健康检查（统一到 /api/health）
-@api.get("/health", tags=["system"])
-async def health_check():
-    return {"status": "ok"}
+    # ---------- Static frontend ----------
+    # 兼容两种前缀：/web 与 /static（你当前 index 重定向用到了 /static，但 mount 用的是 /web）
+    app.mount("/web", StaticFiles(directory="web"), name="web")
+    app.mount("/static", StaticFiles(directory="web"), name="static")
 
-# 业务路由全部挂到 /api 下
-api.include_router(auth_router)
-api.include_router(chat_router)
-api.include_router(rag_router)
-api.include_router(model_router)
+    api = APIRouter(prefix="/api")
 
-# 如有以下模块，则同时纳入 /api
-# api.include_router(agent_router, prefix="/agents", tags=["agents"])
-# api.include_router(brand_router, prefix="/brands", tags=["brands"])
-# api.include_router(project_router, prefix="/projects", tags=["projects"])
-# api.include_router(file_router, prefix="/files", tags=["files"])
-# api.include_router(amazon_router, prefix="/amazon", tags=["amazon"])
+    @api.get("/health", tags=["system"])
+    async def health_check():
+        return {"status": "ok"}
 
-# 将 /api* 装载到应用
-app.include_router(api)
+    # 核心业务路由（缺失则跳过并告警）
+    _include_router_safely(api, "app.routers.auth_router")
+    _include_router_safely(api, "app.routers.chat_router")
+    _include_router_safely(api, "app.routers.rag_router")
+    _include_router_safely(api, "app.routers.model_router")
 
-# 根路径重定向到静态页面（可选）
-@app.get("/")
-async def index():
-    return RedirectResponse(url="/static/chat.html", status_code=302)
+    # 可选业务路由（存在即加载）
+    _include_router_safely(api, "app.routers.agent_router", prefix="/agents", tags=["agents"])
+    _include_router_safely(api, "app.routers.brand_router", prefix="/brands", tags=["brands"])
+    _include_router_safely(api, "app.routers.project_router", prefix="/projects", tags=["projects"])
+    _include_router_safely(api, "app.routers.file_router", prefix="/files", tags=["files"])
+    _include_router_safely(api, "app.routers.amazon_router", prefix="/amazon", tags=["amazon"])
 
-# -------------------- 生命周期钩子 --------------------
+    app.include_router(api)
 
-@app.on_event("startup")
-async def on_startup() -> None:
-    mlogger.configure_logging(settings.log_level)
+    @app.get("/")
+    async def index():
+        # 优先跳到 /web；/static 也可用
+        return RedirectResponse(url="/web/chat.html", status_code=302)
 
-    # 1. 建表
-    await init_db()
-    mlogger.info("App", "startup", msg="database schema ensured")
+    @app.on_event("startup")
+    async def on_startup() -> None:
+        mlogger.configure_logging(settings.log_level)
 
-    # 2. 确保默认 admin 存在
-    async with AsyncSessionFactory() as db:
-        auth_service = AuthService()
-        await auth_service.ensure_default_admin(db)
-    mlogger.info("App", "startup", msg="default admin ensured")
+        # 1) 建表
+        await init_db()
+        mlogger.info("App", "startup", msg="database schema ensured")
 
-@app.on_event("shutdown")
-async def on_shutdown() -> None:
-    mlogger.info("App", "shutdown", msg="application shutdown")
+        # 2) 默认 admin
+        async with AsyncSessionFactory() as db:
+            auth_service = AuthService()
+            await auth_service.ensure_default_admin(db)
+        mlogger.info("App", "startup", msg="default admin ensured")
+
+    @app.on_event("shutdown")
+    async def on_shutdown() -> None:
+        mlogger.info("App", "shutdown", msg="application shutdown")
+
+    return app
+
+
+app = create_app()

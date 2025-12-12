@@ -265,3 +265,33 @@ class RAGRepository:
         stmt = select(RAGChunkORM).where(and_(*conds)).order_by(RAGChunkORM.chunk_index.asc())
         res = await self.db.execute(stmt)
         return list(res.scalars().all())
+
+    async def list_chunks_by_ids(
+            self,
+            chunk_ids: Sequence[int],
+            active_only: bool = True,
+    ) -> List[RAGChunkORM]:
+        if not chunk_ids:
+            return []
+
+        stmt = select(RAGChunkORM).where(RAGChunkORM.id.in_(list(chunk_ids)))
+
+        # 兼容字段命名差异：is_active / active / status
+        if active_only:
+            if hasattr(RAGChunkORM, "is_active"):
+                stmt = stmt.where(RAGChunkORM.is_active == True)  # noqa: E712
+            elif hasattr(RAGChunkORM, "active"):
+                stmt = stmt.where(RAGChunkORM.active == True)  # noqa: E712
+
+        res = await self.db.execute(stmt)
+        return list(res.scalars().all())
+
+    async def list_documents_by_ids(
+            self,
+            doc_ids: Sequence[int],
+    ) -> List[RAGDocumentORM]:
+        if not doc_ids:
+            return []
+        stmt = select(RAGDocumentORM).where(RAGDocumentORM.id.in_(list(doc_ids)))
+        res = await self.db.execute(stmt)
+        return list(res.scalars().all())

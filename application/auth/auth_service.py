@@ -125,16 +125,21 @@ class AuthService:
     async def ensure_default_admin(self, db: AsyncSession) -> None:
         """
         如果不存在 admin 用户，则自动创建一个默认 admin。
-        - username / password 从 settings 读取（可由 .env 配置）
-        - 只在第一次无 admin 时创建一次
+        - dev 环境：允许使用默认口令（但不打印明文）
+        - 非 dev：必须通过环境变量显式配置 DEFAULT_ADMIN_PASSWORD（否则直接报错阻止启动）
         """
-        # 已存在 admin，直接返回
+        # 非 dev 环境禁止使用默认口令（避免“上线即裸奔”）
+        if settings.app_env != "dev":
+            if self._default_admin_password == "admin123":
+                raise RuntimeError(
+                    "DEFAULT_ADMIN_PASSWORD must be set in non-dev environments."
+                )
+
         existing = await self._user_repo.get_by_username(db, self._default_admin_username)
         if existing:
             return
 
         password_hash = self.hash_password(self._default_admin_password)
-
         user = await self._user_repo.create_user(
             db=db,
             username=self._default_admin_username,
@@ -142,11 +147,13 @@ class AuthService:
             role=UserRole.ADMIN,
             is_active=True,
         )
-
         await db.commit()
 
-        # 仅启动日志用，方便你知道默认账号；上线可以改成 mlogger / 或关闭
-        print(
-            f"[AuthService] created default admin user: "
-            f"username={user.username}, password={self._default_admin_password}"
+        # 不输出明文密码
+        from infrastructure import mlogger
+        mlogger.warning(
+            "AuthService",
+            "default_admin_created",
+            msg="default admin user created (password not logged). Please rotate ASAP.",
+            username=user.username,
         )

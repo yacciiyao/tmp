@@ -3,6 +3,7 @@
 # @Description: RAG 主服务（后台 CRUD + 上传入库 + 检索查询）
 from __future__ import annotations
 
+import inspect
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from fastapi import UploadFile
@@ -21,6 +22,9 @@ from application.rag.dto import (
     RAGQueryRequest,
     RAGQueryResponse,
 )
+from application.rag.fusion.rrf import RRFFusionStrategy
+from application.rag.retrieval.normalizers import normalize_dense_hits, normalize_sparse_hits
+from domain.rag_retrieval import FusedHit
 from infrastructure import mlogger
 from infrastructure.config import settings
 from infrastructure.db.models.rag_orm import (
@@ -204,111 +208,143 @@ class RAGService:
     # Query（整合：向量 + BM25 + RRF 融合）
     # ---------------------------------------------------------------------
 
+
+
     async def query(self, req: RAGQueryRequest) -> RAGQueryResponse:
+        async def _maybe_await(x):
+            return await x if inspect.isawaitable(x) else x
+
         corpus = await self.repo.get_corpus(req.corpus_id)
         if not corpus or not corpus.is_active:
             raise ValueError(f"corpus not found or inactive: {req.corpus_id}")
 
-        # 1) Dense: 向量检索
-        dense_hits: List[Dict[str, Any]] = []
+        # -------------------------
+        # 1) Dense retrieval
+        # -------------------------
+        dense_hits = []
         if req.use_vector:
-            embed_alias = corpus.default_embedding_alias or getattr(settings, "default_llm", None)
-            if not embed_alias:
-                mlogger.warning("RAGService", "query:no_embedding_alias", corpus_id=req.corpus_id)
-            else:
-                embed_client = LLMRegistry.get_embedding_llm(embed_alias)
+            embed_alias = (
+                corpus.default_embedding_alias
+                or getattr(settings, "embedding_llm_alias", None)
+                or getattr(settings, "default_llm_alias", None)
+            )
+            try:
+                llm_registry = LLMRegistry()
+                if embed_alias:
+                    embed_client = await _maybe_await(llm_registry.get_client(embed_alias))
+                else:
+                    embed_client = await _maybe_await(llm_registry.get_default_embedding_client())
+
                 engine = EmbeddingEngine(embed_client)
                 q_emb = await engine.embed_query(req.query)
+
                 vs_kind = (corpus.vector_store_type or getattr(settings, "vector_store_type", "faiss")).lower()
                 vector_store = VectorStoreManager.get_store(vs_kind)
-                dense_hits = await vector_store.search(
-                    corpus_id=req.corpus_id,
-                    query_embedding=q_emb,
-                    top_k=req.top_k,
-                    filters=None,
-                )
 
-        # 2) Sparse: ES BM25
-        sparse_hits: List[Dict[str, Any]] = []
-        if req.use_bm25:
-            index_name = corpus.es_index or f"rag_corpus_{req.corpus_id}"
-            try:
-                sparse_hits = self.es.search(
-                    index=index_name,
-                    query=req.query,
-                    top_k=req.top_k,
-                    filters={"corpus_id": req.corpus_id},
+                dense_raw = await _maybe_await(
+                    vector_store.search(
+                        corpus_id=req.corpus_id,
+                        query_embedding=q_emb,
+                        top_k=req.top_k,
+                        filters=None,
+                    )
                 )
+                dense_hits = normalize_dense_hits(dense_raw or [])
+            except Exception as e:
+                mlogger.warning("RAGService", "query:dense_error", corpus_id=req.corpus_id, error=str(e))
+                dense_hits = []
+
+        # -------------------------
+        # 2) Sparse retrieval (ES BM25)
+        # -------------------------
+        sparse_hits = []
+        if req.use_bm25:
+            try:
+                index_name = getattr(corpus, "es_index", None) or self.es.resolve_index(req.corpus_id)
+                sparse_raw = await _maybe_await(
+                    self.es.search(
+                        index=index_name,
+                        corpus_id=req.corpus_id,
+                        query=req.query,
+                        top_k=req.top_k,
+                        filters=None,
+                    )
+                )
+                sparse_hits = normalize_sparse_hits(sparse_raw or [])
             except Exception as e:
                 mlogger.warning("RAGService", "query:es_error", corpus_id=req.corpus_id, error=str(e))
+                sparse_hits = []
 
-        # 3) 融合（RRF）
-        K = 60.0
-        merged: Dict[int, Tuple[float, Dict[str, Any]]] = {}  # chunk_id -> (score, last_meta)
+        # -------------------------
+        # 3) Fuse
+        # -------------------------
+        fusion = RRFFusionStrategy(k=60.0)
+        fused: List[FusedHit] = fusion.fuse(dense=dense_hits, sparse=sparse_hits, top_k=req.top_k)
 
-        def add_ranked(hits: List[Dict[str, Any]], label: str) -> None:
-            for rank, h in enumerate(hits, start=1):
-                cid = int(h.get("chunk_id", 0))
-                if cid <= 0:
-                    continue
-                s = 1.0 / (K + rank)
-                # 记录来源
-                h = dict(h)
-                h["source"] = label
-                if cid in merged:
-                    prev = merged[cid]
-                    merged[cid] = (prev[0] + s, h)
-                    merged[cid][1]["source"] = "fusion"
-                else:
-                    merged[cid] = (s, h)
+        ranked_chunk_ids = [h.chunk_id for h in fused if h.chunk_id > 0]
 
-        add_ranked(dense_hits, "dense")
-        add_ranked(sparse_hits, "sparse")
+        # -------------------------
+        # 4) Batch fetch chunks + docs
+        # -------------------------
+        chunks = []
+        if hasattr(self.repo, "list_chunks_by_ids"):
+            chunks = await self.repo.list_chunks_by_ids(ranked_chunk_ids, active_only=True)
+        else:
+            # 兜底：逐个取（性能差但可用）
+            chunks = []
+            for cid in ranked_chunk_ids:
+                if hasattr(self.repo, "get_chunk"):
+                    c = await self.repo.get_chunk(cid)
+                    if c:
+                        chunks.append(c)
 
-        ranked = sorted(merged.items(), key=lambda x: x[1][0], reverse=True)[: req.top_k]
-        chunk_ids = [cid for cid, _ in ranked]
+        chunk_by_id = {int(c.id): c for c in chunks}
 
-        # 4) 拉取 chunk 文本，并组装来源
-        hits_by_doc: Dict[int, List[int]] = {}
-        meta_by_cid: Dict[int, Dict[str, Any]] = {}
-        for cid, (score, meta) in ranked:
-            doc_id = int(meta.get("doc_id", 0))
-            if doc_id <= 0:
-                continue
-            hits_by_doc.setdefault(doc_id, []).append(cid)
-            meta_by_cid[cid] = {"score": score, **meta}
+        doc_ids = sorted({int(getattr(c, "doc_id", 0)) for c in chunks if int(getattr(c, "doc_id", 0)) > 0})
+        docs = []
+        if hasattr(self.repo, "list_documents_by_ids"):
+            docs = await self.repo.list_documents_by_ids(doc_ids)
+        else:
+            docs = []
+            for did in doc_ids:
+                d = await self.repo.get_document(did)
+                if d:
+                    docs.append(d)
 
+        doc_by_id = {int(d.id): d for d in docs}
+
+        # -------------------------
+        # 5) Build response hits (保序：按 fused 的顺序)
+        # -------------------------
         final_hits: List[RAGChunkHit] = []
-        for doc_id, cids in hits_by_doc.items():
-            chunks = await self.repo.list_chunks_by_doc(doc_id, active_only=True)
-            text_map = {ch.id: ch for ch in chunks if ch.id in set(cids)}
-            # 获取文档（补充来源信息）
-            doc_obj = await self.repo.get_document(doc_id)
-            for cid in cids:
-                ch: Optional[RAGChunkORM] = text_map.get(cid)
-                meta = meta_by_cid.get(cid, {})
-                source_type = meta.get("source_type") or (doc_obj.source_type if doc_obj else None)
-                source_uri = meta.get("source_uri") or (doc_obj.source_uri if doc_obj else None)
-                # 可访问 URL
-                source_url = None
-                if source_type == "file" and source_uri:
-                    source_url = build_file_url(str(source_uri))
-                elif source_type == "url":
-                    source_url = str(source_uri)
+        for fh in fused:
+            ch = chunk_by_id.get(int(fh.chunk_id))
+            doc_id = int(getattr(ch, "doc_id", fh.doc_id)) if ch else int(fh.doc_id)
+            doc_obj = doc_by_id.get(doc_id)
 
-                hit = RAGChunkHit(
-                    chunk_id=cid,
+            source_type = getattr(doc_obj, "source_type", None) if doc_obj else None
+            source_uri = getattr(doc_obj, "source_uri", None) if doc_obj else None
+
+            source_url = None
+            if source_type == "file" and source_uri:
+                source_url = build_file_url(str(source_uri))
+            elif source_type == "url" and source_uri:
+                source_url = str(source_uri)
+
+            final_hits.append(
+                RAGChunkHit(
+                    chunk_id=int(fh.chunk_id),
                     doc_id=doc_id,
                     corpus_id=req.corpus_id,
-                    score=float(meta.get("score", 0.0)),
-                    text=(ch.text if ch else meta.get("text", "")),
-                    source=meta.get("source", "fusion"),
+                    score=float(fh.score),
+                    text=(getattr(ch, "text", "") if ch else ""),
+                    source=fh.source_label,
                     source_type=source_type,
                     source_uri=source_uri,
                     source_url=source_url,
-                    meta=(ch.meta if ch else {}),
+                    meta=(getattr(ch, "meta", None) if ch else (fh.metadata or {})),
                 )
-                final_hits.append(hit)
+            )
 
         context = "\n\n".join([h.text for h in final_hits if h.text])
 
