@@ -4,8 +4,6 @@ from typing import Any, AsyncIterator, Dict, List, Optional, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from application.rag.dto import RAGQueryRequest
-from application.rag.query_service import RAGQueryService
 from domain.chat import ChatMessage, ChatSession
 from infrastructure import mlogger
 from infrastructure.llm.llm_registry import LLMRegistry
@@ -13,12 +11,17 @@ from infrastructure.repositories.chat_repository import ChatRepository
 
 
 class ChatService:
+    """
+    Chat 服务：会话管理 / 非流式对话 / 流式对话。
+    说明：
+    - 已移除对 RAGQueryService 的依赖。_prepare_rag 目前做安全降级（占位返回），
+      等你提供新的内部检索接口后，可在该方法内接入真实 RAG。
+    """
+
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
         self.repo = ChatRepository(db)
         self.llm_registry = LLMRegistry()
-        # RAG 检索服务（仅 chat 内部使用）
-        self.rag_query_service = RAGQueryService(db)
 
     # ------------------------ Session ------------------------
 
@@ -34,7 +37,7 @@ class ChatService:
         session = await self.repo.create_session(
             user_id=user_id,
             model_alias=model_alias,
-           	use_rag=use_rag,
+            use_rag=use_rag,
             rag_corpus_ids=rag_corpus_ids,
             meta=meta,
         )
@@ -59,6 +62,46 @@ class ChatService:
             await self.db.commit()
         return ok
 
+    async def update_session_if_empty(
+        self,
+        *,
+        session_id: str,
+        user_id: int,
+        model_alias: Optional[str] = None,
+        use_rag: Optional[bool] = None,
+        rag_corpus_ids: Optional[List[int]] = None,
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> ChatSession:
+        """
+        仅当会话没有任何消息时允许修改配置；否则抛 RuntimeError('session_not_empty')
+        """
+        session = await self.repo.get_session(session_id=session_id, user_id=user_id)
+        if not session:
+            raise ValueError("Session not found")
+
+        msgs = await self.repo.list_messages(session_id=session.id, limit=1)
+        if msgs:
+            raise RuntimeError("session_not_empty")
+
+        changed = False
+        if model_alias is not None and model_alias != session.model_alias:
+            session.model_alias = model_alias
+            changed = True
+        if use_rag is not None and use_rag != session.use_rag:
+            session.use_rag = use_rag
+            changed = True
+        if rag_corpus_ids is not None:
+            session.rag_corpus_ids = rag_corpus_ids
+            changed = True
+        if meta is not None:
+            session.meta = meta
+            changed = True
+
+        if changed:
+            await self.db.flush()
+            await self.db.commit()
+        return session
+
     # ------------------------ Chat（非流式） ------------------------
 
     async def chat(
@@ -73,7 +116,7 @@ class ChatService:
         if not session:
             raise ValueError("Session not found")
 
-        # 1. 先落地用户消息
+        # 1) 先落地用户消息
         user_msg = await self.repo.create_message(
             session_id=session.id,
             user_id=user_id,
@@ -82,16 +125,16 @@ class ChatService:
             content_text=content_text,
         )
 
-        # 2. 取最近历史
+        # 2) 最近历史
         history = await self.repo.list_messages(session_id=session.id, limit=20)
 
-        # 3. RAG 检索（可选）
+        # 3) RAG（占位：未实际检索，返回 used=False）
         rag_used, rag_context, rag_debug = await self._prepare_rag(
             session=session,
             user_input=content_text,
         )
 
-        # 4. 组装 LLM 消息
+        # 4) 组装 LLM 消息
         messages = self._build_llm_messages(
             session=session,
             history=history,
@@ -99,13 +142,12 @@ class ChatService:
             rag_context=rag_context if rag_used else None,
         )
 
-        # 5. 调模型
+        # 5) 调模型
         client = await self.llm_registry.get_client(session.model_alias)
         client = cast(Any, client)
-
         answer_text = await client.acomplete(messages)
 
-        # 6. 写入 assistant 消息（把 RAG 结果存到 parsed_meta）
+        # 6) 写入 assistant 消息
         assistant_msg = await self.repo.create_message(
             session_id=session.id,
             user_id=None,
@@ -115,7 +157,7 @@ class ChatService:
             parsed_meta={"rag": rag_debug} if rag_used else None,
         )
 
-        # 7. 自动补标题
+        # 7) 自动补标题
         session = await self._ensure_session_title(
             session=session,
             first_user_message=content_text,
@@ -150,7 +192,7 @@ class ChatService:
         if not session:
             raise ValueError("Session not found")
 
-        # 1. 先落地用户消息
+        # 1) 用户消息
         await self.repo.create_message(
             session_id=session.id,
             user_id=user_id,
@@ -159,16 +201,16 @@ class ChatService:
             content_text=content_text,
         )
 
-        # 2. 准备历史
+        # 2) 历史
         history = await self.repo.list_messages(session_id=session.id, limit=20)
 
-        # 3. RAG 检索（可选）
+        # 3) RAG（占位）
         rag_used, rag_context, rag_debug = await self._prepare_rag(
             session=session,
             user_input=content_text,
         )
 
-        # 4. 组装 LLM 消息
+        # 4) LLM 消息
         messages = self._build_llm_messages(
             session=session,
             history=history,
@@ -179,26 +221,16 @@ class ChatService:
         client = await self.llm_registry.get_client(session.model_alias)
         client = cast(Any, client)
 
-        answer_chunks: List[str] = []
-
+        chunks: List[str] = []
         try:
             async for chunk in client.astream(messages):
                 if not chunk:
                     continue
-                answer_chunks.append(chunk)
+                chunks.append(chunk)
                 yield chunk
-        except Exception as e:
-            mlogger.warning(
-                "ChatService",
-                "chat_stream",
-                msg=f"stream error: {e}",
-                session_id=session.id,
-            )
-            raise
         finally:
-            full_answer = "".join(answer_chunks).strip()
+            full_answer = "".join(chunks).strip()
             if full_answer:
-                # 把完整答案落库，并带上 RAG 调试信息
                 await self.repo.create_message(
                     session_id=session.id,
                     user_id=None,
@@ -213,7 +245,22 @@ class ChatService:
                 )
                 await self.db.commit()
 
-    # ------------------------ 内部工具：RAG ------------------------
+    # ------------------------ 消息列表 ------------------------
+
+    async def list_messages(
+        self,
+        *,
+        session_id: str,
+        user_id: int,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> List[ChatMessage]:
+        session = await self.repo.get_session(session_id=session_id, user_id=user_id)
+        if not session:
+            raise ValueError("Session not found")
+        return await self.repo.list_messages(session_id=session.id, limit=limit, offset=offset)
+
+    # ------------------------ 内部工具：RAG（占位实现） ------------------------
 
     async def _prepare_rag(
         self,
@@ -222,97 +269,27 @@ class ChatService:
         user_input: str,
     ) -> tuple[bool, str, Dict[str, Any]]:
         """
-        根据会话配置决定是否走 RAG，并返回：
-        - used: 是否真实使用了 RAG（有命中）
-        - rag_context: 拼接好的上下文文本（给 LLM）
-        - debug: 结构化调试信息（落 parsed_meta / extra）
+        占位实现：
+        - 保留接口与返回结构，暂不做实际检索。
+        - 当你提供新的检索入口（例如 RAGEngine.query(corpus_id, query, ...)），
+          在此处按会话的 rag_corpus_ids 聚合结果并返回上下文文本。
         """
-        # 基本开关判断
+        # 若未开启 RAG 或无 corpus，直接关闭
         if not session.use_rag:
             return False, "", {}
-
-        corpus_ids = session.rag_corpus_ids or []
-        if not corpus_ids:
+        if not session.rag_corpus_ids:
             return False, "", {}
 
-        user_input = (user_input or "").strip()
-        if not user_input:
-            return False, "", {}
-
-        all_hits: List[Dict[str, Any]] = []
-        corpus_items: List[Dict[str, Any]] = []
-        context_parts: List[str] = []
-
-        for corpus_id in corpus_ids:
-            try:
-                req = RAGQueryRequest(
-                    corpus_id=corpus_id,
-                    query=user_input,
-                    top_k=8,
-                    use_vector=True,
-                    use_bm25=True,
-                    use_rerank=False,
-                )
-                resp = await self.rag_query_service.query(req)
-            except Exception as e:
-                # 单个 corpus 失败视为降级，继续其他 corpus
-                mlogger.warning(
-                    "ChatService",
-                    "rag_query",
-                    msg=f"rag query error: {e!r}",
-                    session_id=session.id,
-                    corpus_id=corpus_id,
-                )
-                continue
-
-            if not resp.hits:
-                continue
-
-            # 记录 corpus 级别信息
-            preview = resp.context[:200] if resp.context else ""
-            corpus_items.append(
-                {
-                    "corpus_id": resp.corpus_id,
-                    "hit_count": len(resp.hits),
-                    "context_preview": preview,
-                }
-            )
-            if resp.context:
-                context_parts.append(f"[知识库 {resp.corpus_id}]\n{resp.context}")
-
-            # 展平 hits
-            for rank, hit in enumerate(resp.hits, start=1):
-                all_hits.append(
-                    {
-                        "corpus_id": hit.corpus_id,
-                        "doc_id": hit.doc_id,
-                        "chunk_id": hit.chunk_id,
-                        "score": hit.score,
-                        "source_type": hit.source_type,
-                        "source_uri": hit.source_uri,
-                        "text": hit.text,
-                        "meta": hit.meta,
-                        "rank_in_corpus": rank,
-                    }
-                )
-
-        if not context_parts:
-            # 没有任何有效命中，则视为未使用 RAG
-            return False, "", {
-                "used": False,
-                "total_hits": 0,
-                "corpora": corpus_items,
-                "hits": [],
-            }
-
-        rag_context = "\n\n".join(context_parts)
         debug = {
-            "used": True,
-            "total_hits": len(all_hits),
-            "corpora": corpus_items,
-            "hits": all_hits,
+            "used": False,
+            "total_hits": 0,
+            "corpora": [
+                {"corpus_id": cid, "hit_count": 0, "context_preview": ""}
+                for cid in (session.rag_corpus_ids or [])
+            ],
+            "hits": [],
         }
-        return True, rag_context, debug
+        return False, "", debug
 
     # ------------------------ 内部工具：消息构造 ------------------------
 
@@ -324,14 +301,8 @@ class ChatService:
         user_input: str,
         rag_context: Optional[str] = None,
     ) -> List[Dict[str, str]]:
-        """
-        根据历史 + 当前用户输入 + 可选 RAG 上下文构造发送给 LLM 的 messages。
-        - history：只保留 user / assistant 且有 content_text 的消息
-        - rag_context：存在时，插入一条 system 提示
-        """
         messages: List[Dict[str, str]] = []
 
-        # 如果有 RAG 上下文，插入 system 提示
         if rag_context:
             messages.append(
                 {
@@ -345,20 +316,13 @@ class ChatService:
                 }
             )
 
-        # 历史对话
         for msg in history:
             if msg.role not in ("user", "assistant"):
                 continue
             if not msg.content_text:
                 continue
-            messages.append(
-                {
-                    "role": msg.role,
-                    "content": msg.content_text,
-                }
-            )
+            messages.append({"role": msg.role, "content": msg.content_text})
 
-        # 当前用户输入
         messages.append({"role": "user", "content": user_input})
         return messages
 
@@ -385,10 +349,7 @@ class ChatService:
                 "role": "system",
                 "content": "你是会话命名助手，只输出一个不超过15个字的中文标题，不要带引号，不要解释。",
             },
-            {
-                "role": "user",
-                "content": first_user_message,
-            },
+            {"role": "user", "content": first_user_message},
         ]
 
         try:

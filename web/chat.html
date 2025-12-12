@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8" />
+    <title>Multi-Agent Hub</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- 主题样式 -->
+    <link rel="stylesheet" href="/web/app/styles.css" />
+    <!-- Vue / Router（全局）-->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://unpkg.com/vue-router@4/dist/vue-router.global.prod.js"></script>
+    <!-- axios（全局）-->
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+</head>
+<body>
+<div id="app">
+    <!-- 顶部条 -->
+    <header class="app-topbar">
+        <div class="brand">
+            <img class="brand-logo" src="/web/assets/logo.svg" alt="logo" onerror="this.src='/web/assets/logo.png'"/>
+            <span class="brand-name">Multi-Agent Hub</span>
+        </div>
+        <div class="top-actions">
+            <span v-if="store.user?.username" class="user-chip">{{ store.user.username }}</span>
+            <button class="btn btn-ghost" @click="logout" v-if="store.token">退出</button>
+        </div>
+    </header>
+
+    <!-- 路由页面 -->
+    <router-view></router-view>
+</div>
+
+<!-- 应用脚本（顺序不能改） -->
+<script type="module" src="/web/app/api.js"></script>
+<script type="module" src="/web/app/store.js"></script>
+<script type="module" src="/web/app/components/SidebarSessions.js"></script>
+<script type="module" src="/web/app/components/MessageList.js"></script>
+<script type="module" src="/web/app/components/ChatComposer.js"></script>
+<script type="module" src="/web/app/components/ChatToolbar.js"></script>
+<script type="module" src="/web/app/pages/LoginPage.js"></script>
+<script type="module" src="/web/app/pages/ChatPage.js"></script>
+<script type="module" src="/web/app/router.js"></script>
+<script type="module" src="/web/app/main.js"></script>
+</body>
+</html>

@@ -34,7 +34,7 @@ class AuthService:
         self._secret_key: str = settings.jwt_secret_key
         self._algorithm: str = getattr(settings, "jwt_algorithm", "HS256")
         self._access_token_expires_minutes: int = int(
-            getattr(settings, "jwt_access_token_expires_minutes", 60)
+            getattr(settings, "jwt_expire_minutes", 1440)
         )
 
         # UserRepository 采用“方法传 db”的风格，这里只保留一个实例

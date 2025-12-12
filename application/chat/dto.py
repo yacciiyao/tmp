@@ -103,15 +103,33 @@ class ChatMessageResponse(BaseModel):
     updated_at: Optional[int]
 
 
-class ChatResponse(BaseModel):
+class ChatCompletionRequest(BaseModel):
     """
-    非流式对话响应：
-    - session: 当前会话
-    - answer: 模型回复文本
-    - message: 持久化后的 assistant 消息
-    - rag_used: 是否启用了 RAG
+    聊天请求体：
+    - use_rag / rag_corpus_ids 控制是否启用 RAG 检索；
+    - session_id 可指定已有会话；
     """
-    session: SessionResponse
+    session_id: Optional[str]
+    message: str
+    use_rag: Optional[bool] = None
+    rag_corpus_ids: Optional[List[int]] = None
+
+
+class ChatAttachmentInfo(BaseModel):
+    """对话响应中返回的附件元信息"""
+    file_url: str
+    file_name: str
+    mime_type: str
+
+
+class ChatCompletionResponse(BaseModel):
+    """
+    聊天响应：
+    - rag_used / rag_context_text 用于前端调试；
+    - attachments 仅记录本轮参与上下文的附件；
+    """
+    session_id: str
     answer: str
-    message: ChatMessageResponse
-    rag_used: bool = False
+    rag_used: bool
+    rag_context_text: Optional[str] = None
+    attachments: Optional[List[ChatAttachmentInfo]] = None

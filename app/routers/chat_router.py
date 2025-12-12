@@ -34,6 +34,12 @@ class SessionCreateRequest(BaseModel):
         description="会话扩展信息（预留 agent_mode 等）",
     )
 
+class SessionPatchRequest(BaseModel):
+    model_alias: Optional[str] = None
+    use_rag: Optional[bool] = None
+    rag_corpus_ids: Optional[List[int]] = None
+    meta: Optional[Dict[str, Any]] = None
+
 
 class SessionResponse(BaseModel):
     id: str                     # UUID
@@ -209,7 +215,65 @@ async def delete_session(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.patch(
+    "/sessions/{session_id}",
+    response_model=SessionResponse,
+    summary="更新会话配置（仅空会话）",
+)
+async def patch_session(
+    session_id: str,
+    body: SessionPatchRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    service = ChatService(db)
+    try:
+        session = await service.update_session_if_empty(
+            session_id=session_id,
+            user_id=current_user.id,
+            model_alias=body.model_alias,
+            use_rag=body.use_rag,
+            rag_corpus_ids=body.rag_corpus_ids,
+            meta=body.meta,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    except RuntimeError as e:
+        # 非空会话不允许修改
+        raise HTTPException(status_code=409, detail=str(e))
+
+    return _session_to_schema(session)
+
+
 # ===================== Chat APIs =====================
+
+@router.get(
+    "/sessions/{session_id}/messages",
+    response_model=List[ChatMessageResponse],
+    summary="消息列表",
+)
+async def list_messages_api(
+    session_id: str,
+    limit: int = Query(500, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    service = ChatService(db)
+    try:
+        msgs = await service.list_messages(
+            session_id=session_id,
+            user_id=current_user.id,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    return [_message_to_schema(m) for m in msgs]
+
 
 @router.post(
     "/sessions/{session_id}/messages",

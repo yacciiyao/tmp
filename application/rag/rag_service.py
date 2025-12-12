@@ -1,89 +1,73 @@
+# -*- coding: utf-8 -*-
+# @File: application/rag/rag_service.py
+# @Description: RAG 主服务（后台 CRUD + 上传入库 + 检索查询）
 from __future__ import annotations
 
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from application.file.file_service import FileService
 from application.rag.dto import (
     CorpusCreateRequest,
-    CorpusUpdateRequest,
-    CorpusResponse,
     CorpusListResponse,
+    CorpusResponse,
+    CorpusUpdateRequest,
     DocumentCreateRequest,
-    DocumentResponse,
     DocumentListResponse,
+    DocumentResponse,
+    DocumentUploadResponse,
+    RAGChunkHit,
+    RAGQueryRequest,
+    RAGQueryResponse,
 )
-from application.rag.ingestion_service import IngestionService
+from infrastructure import mlogger
+from infrastructure.config import settings
+from infrastructure.db.models.rag_orm import (
+    RAGCorpusORM,
+    RAGDocumentORM,
+    RAGDocumentStatus,
+    RAGChunkORM,
+)
 from infrastructure.repositories.rag_repository import RAGRepository
+from infrastructure.storage.file_storage import save_upload_file
+from application.rag.ingestion_service import IngestionService
+from infrastructure.rag.embeddings import EmbeddingEngine
+from infrastructure.llm.llm_registry import LLMRegistry
+from infrastructure.vector_store.manager import VectorStoreManager
+from infrastructure.search.es_client import ESClient
+from infrastructure.storage.path_utils import build_file_url
 
 
 class RAGService:
-    """
-    业务逻辑层：
-    - 做基本校验
-    - 调用仓储
-    - （可选）协调文件上传 + 文档创建 + 入库
-    - 返回 DTO 给 router / 脚本
-    """
-
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
         self.repo = RAGRepository(db)
-        # 文档入库流水线（loader → splitter → embedding → vector_store / ES）
-        self.ingestion_service = IngestionService(db)
-        # 文件上传 / 解析通用服务
-        self.file_service = FileService()
+        self.es = ESClient()
 
-    # ---------- Corpus ----------
+    # ---------------------------------------------------------------------
+    # Corpus
+    # ---------------------------------------------------------------------
 
-    async def create_corpus(self, req: CorpusCreateRequest) -> CorpusResponse:
-        orm = await self.repo.create_corpus(
+    async def create_corpus(self, req: CorpusCreateRequest, *, owner_id: int) -> CorpusResponse:
+        corpus = await self.repo.create_corpus(
+            owner_id=owner_id,
             name=req.name,
-            type=req.type,
             description=req.description,
-            owner_id=req.owner_id,
+            type="file",
             default_embedding_alias=req.default_embedding_alias,
-            vector_store_type=req.vector_store_type,
-            es_index=req.es_index,
+            vector_store_type=req.vector_store_type or getattr(settings, "vector_store_type", "faiss"),
+            es_index=req.es_index or None,
             is_active=True,
         )
         await self.db.commit()
-        return CorpusResponse.model_validate(orm)
+        return CorpusResponse.model_validate(corpus)
 
-    async def update_corpus(
-        self,
-        corpus_id: int,
-        req: CorpusUpdateRequest,
-    ) -> Optional[CorpusResponse]:
-        fields: Dict[str, Any] = {}
-        if req.name is not None:
-            fields["name"] = req.name
-        if req.type is not None:
-            fields["type"] = req.type
-        if req.description is not None:
-            fields["description"] = req.description
-        if req.is_active is not None:
-            fields["is_active"] = req.is_active
-        if req.default_embedding_alias is not None:
-            fields["default_embedding_alias"] = req.default_embedding_alias
-        if req.vector_store_type is not None:
-            fields["vector_store_type"] = req.vector_store_type
-        if req.es_index is not None:
-            fields["es_index"] = req.es_index
-
-        orm = await self.repo.update_corpus(corpus_id, fields)
-        await self.db.commit()
-        if not orm:
-            return None
-        return CorpusResponse.model_validate(orm)
-
-    async def get_corpus(self, corpus_id: int) -> Optional[CorpusResponse]:
-        orm = await self.repo.get_corpus(corpus_id)
-        if not orm:
-            return None
-        return CorpusResponse.model_validate(orm)
+    async def get_corpus(self, corpus_id: int) -> CorpusResponse:
+        corpus = await self.repo.get_corpus(corpus_id)
+        if not corpus:
+            raise ValueError(f"corpus not found: {corpus_id}")
+        return CorpusResponse.model_validate(corpus)
 
     async def list_corpora(
         self,
@@ -91,62 +75,97 @@ class RAGService:
         owner_id: Optional[int] = None,
         limit: int = 50,
         offset: int = 0,
+        active_only: bool = True,
     ) -> CorpusListResponse:
-        orms = await self.repo.list_corpora(
+        items = await self.repo.list_corpora(
             owner_id=owner_id,
             limit=limit,
             offset=offset,
+            active_only=active_only,
         )
-        items = [CorpusResponse.model_validate(o) for o in orms]
-        return CorpusListResponse(items=items)
+        return CorpusListResponse(items=[CorpusResponse.model_validate(c) for c in items])
 
-    # ---------- Document ----------
+    async def update_corpus(self, corpus_id: int, req: CorpusUpdateRequest) -> CorpusResponse:
+        corpus = await self.repo.get_corpus(corpus_id)
+        if not corpus:
+            raise ValueError(f"corpus not found: {corpus_id}")
+
+        corpus = await self.repo.update_corpus(
+            corpus,
+            name=req.name,
+            description=req.description,
+            default_embedding_alias=req.default_embedding_alias,
+            vector_store_type=req.vector_store_type,
+            es_index=req.es_index,
+            is_active=req.is_active,
+        )
+        await self.db.commit()
+        return CorpusResponse.model_validate(corpus)
+
+    async def delete_corpus(self, corpus_id: int) -> Dict[str, Any]:
+        corpus = await self.repo.get_corpus(corpus_id)
+        if not corpus:
+            raise ValueError(f"corpus not found: {corpus_id}")
+        await self.repo.soft_delete_corpus(corpus)
+        await self.db.commit()
+        return {"id": corpus_id, "deleted": True}
+
+    # ---------------------------------------------------------------------
+    # Document
+    # ---------------------------------------------------------------------
 
     async def create_document(
         self,
+        *,
         corpus_id: int,
         req: DocumentCreateRequest,
+        uploader_id: Optional[int] = None,
     ) -> DocumentResponse:
-        # 简单校验：知识库是否存在、是否 active
         corpus = await self.repo.get_corpus(corpus_id)
         if not corpus:
-            raise ValueError(f"corpus not found, id={corpus_id}")
-        if not corpus.is_active:
-            raise RuntimeError(f"corpus is not active, id={corpus_id}")
+            raise ValueError(f"corpus not found: {corpus_id}")
 
-        orm = await self.repo.create_document(
+        # 去重：相同 (corpus, file_name) 或 (corpus, source_uri) 的旧版本全部软删
+        existing = await self.repo.find_existing_documents(
             corpus_id=corpus_id,
+            file_name=req.file_name,
+            source_uri=req.source_uri,
+            active_only=True,
+        )
+        if existing:
+            await self.repo.deactivate_documents([d.id for d in existing])
+
+        doc = await self.repo.create_document(
+            corpus_id=corpus_id,
+            owner_id=(req.owner_id if req.owner_id is not None else corpus.owner_id),
+            uploader_id=uploader_id,
             source_type=req.source_type,
             source_uri=req.source_uri,
             file_name=req.file_name,
             mime_type=req.mime_type,
-            extra_meta=req.extra_meta,
+            extra_meta=req.extra_meta or {},
+            status=RAGDocumentStatus.PENDING,
         )
         await self.db.commit()
-        return DocumentResponse.model_validate(orm)
+        return DocumentResponse.model_validate(doc)
 
-    async def get_document(self, doc_id: int) -> Optional[DocumentResponse]:
-        orm = await self.repo.get_document(doc_id)
-        if not orm:
-            return None
-        return DocumentResponse.model_validate(orm)
+    async def get_document(self, doc_id: int) -> DocumentResponse:
+        doc = await self.repo.get_document(doc_id)
+        if not doc:
+            raise ValueError(f"document not found: {doc_id}")
+        return DocumentResponse.model_validate(doc)
 
-    async def list_documents(
-        self,
-        *,
-        corpus_id: int,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> DocumentListResponse:
-        orms = await self.repo.list_documents_by_corpus(
-            corpus_id=corpus_id,
-            limit=limit,
-            offset=offset,
-        )
-        items = [DocumentResponse.model_validate(o) for o in orms]
-        return DocumentListResponse(items=items)
+    async def list_documents(self, *, corpus_id: int, limit: int = 100, offset: int = 0) -> DocumentListResponse:
+        items = await self.repo.list_documents(corpus_id=corpus_id, limit=limit, offset=offset, active_only=True)
+        return DocumentListResponse(items=[DocumentResponse.model_validate(d) for d in items])
 
-    # ---------- 上传 + 入库（管理员导入场景） ----------
+    async def delete_document(self, doc_id: int) -> Dict[str, Any]:
+        doc = await self.repo.get_document(doc_id)
+        if not doc:
+            raise ValueError(f"document not found: {doc_id}")
+        await self.repo.soft_delete_document(doc)
+        await self.db.commit()
+        return {"id": doc_id, "deleted": True}
 
     async def upload_and_ingest_document(
         self,
@@ -154,52 +173,148 @@ class RAGService:
         corpus_id: int,
         uploader_id: int,
         upload: UploadFile,
-    ) -> DocumentResponse:
+    ) -> DocumentUploadResponse:
         """
-        管理员上传文件并导入指定知识库（RAG）：
-
-        - 校验知识库存在且为 active
-        - 使用 FileService 保存文件到本地（RAG 专用目录 / user_id=0）
-        - 创建 rag_document 记录（source_type=file, source_uri=绝对路径）
-        - 调用 IngestionService.ingest_document 完成解析 / 切分 / 向量化 / ES
-        - 返回最新的 DocumentResponse（包含当前状态）
-
-        注意：
-        - 仅后台管理接口应调用该方法
-        - 用户对话上传不应走此方法（不会写入 rag_* / 向量库）
+        一步式：上传文件 -> 创建文档 -> 触发入库
         """
-        # 1. 校验 corpus
-        corpus_orm = await self.repo.get_corpus(corpus_id)
-        if not corpus_orm:
-            raise ValueError(f"corpus not found, id={corpus_id}")
-        if not corpus_orm.is_active:
-            raise RuntimeError(f"corpus is not active, id={corpus_id}")
-
-        # 2. 保存文件（FileService 负责路径 / 大小 / URL 等）
-        file_info = await self.file_service.upload_rag_file(
+        rel_path, url = await save_upload_file(uploader_id, upload)
+        doc = await self.create_document(
             corpus_id=corpus_id,
+            req=DocumentCreateRequest(
+                source_type="file",
+                source_uri=rel_path,
+                file_name=upload.filename,
+                mime_type=upload.content_type or "application/octet-stream",
+                extra_meta=None,
+                owner_id=uploader_id,  # 记录归属
+            ),
             uploader_id=uploader_id,
-            upload=upload,
         )
+        # 入库
+        ing = IngestionService(self.db)
+        await ing.ingest_document(doc.id)
 
-        # 3. 创建文档记录（复用 create_document 逻辑）
-        create_req = DocumentCreateRequest(
-            source_type="file",
-            source_uri=file_info.absolute_path,  # loader 按绝对路径读取
-            file_name=file_info.file_name,
-            mime_type=file_info.mime_type,
-            extra_meta={
-                "rel_path": file_info.rel_path,
-                "url": file_info.url,
-                "uploader_id": uploader_id,
-                "size_bytes": file_info.size_bytes,
-            },
+        # 重新读取以呈现最新状态
+        doc2 = await self.repo.get_document(doc.id)
+        assert doc2 is not None
+        await self.db.commit()
+        return DocumentUploadResponse(document=DocumentResponse.model_validate(doc2), rel_path=rel_path, file_url=url)
+
+    # ---------------------------------------------------------------------
+    # Query（整合：向量 + BM25 + RRF 融合）
+    # ---------------------------------------------------------------------
+
+    async def query(self, req: RAGQueryRequest) -> RAGQueryResponse:
+        corpus = await self.repo.get_corpus(req.corpus_id)
+        if not corpus or not corpus.is_active:
+            raise ValueError(f"corpus not found or inactive: {req.corpus_id}")
+
+        # 1) Dense: 向量检索
+        dense_hits: List[Dict[str, Any]] = []
+        if req.use_vector:
+            embed_alias = corpus.default_embedding_alias or getattr(settings, "default_llm", None)
+            if not embed_alias:
+                mlogger.warning("RAGService", "query:no_embedding_alias", corpus_id=req.corpus_id)
+            else:
+                embed_client = LLMRegistry.get_embedding_llm(embed_alias)
+                engine = EmbeddingEngine(embed_client)
+                q_emb = await engine.embed_query(req.query)
+                vs_kind = (corpus.vector_store_type or getattr(settings, "vector_store_type", "faiss")).lower()
+                vector_store = VectorStoreManager.get_store(vs_kind)
+                dense_hits = await vector_store.search(
+                    corpus_id=req.corpus_id,
+                    query_embedding=q_emb,
+                    top_k=req.top_k,
+                    filters=None,
+                )
+
+        # 2) Sparse: ES BM25
+        sparse_hits: List[Dict[str, Any]] = []
+        if req.use_bm25:
+            index_name = corpus.es_index or f"rag_corpus_{req.corpus_id}"
+            try:
+                sparse_hits = self.es.search(
+                    index=index_name,
+                    query=req.query,
+                    top_k=req.top_k,
+                    filters={"corpus_id": req.corpus_id},
+                )
+            except Exception as e:
+                mlogger.warning("RAGService", "query:es_error", corpus_id=req.corpus_id, error=str(e))
+
+        # 3) 融合（RRF）
+        K = 60.0
+        merged: Dict[int, Tuple[float, Dict[str, Any]]] = {}  # chunk_id -> (score, last_meta)
+
+        def add_ranked(hits: List[Dict[str, Any]], label: str) -> None:
+            for rank, h in enumerate(hits, start=1):
+                cid = int(h.get("chunk_id", 0))
+                if cid <= 0:
+                    continue
+                s = 1.0 / (K + rank)
+                # 记录来源
+                h = dict(h)
+                h["source"] = label
+                if cid in merged:
+                    prev = merged[cid]
+                    merged[cid] = (prev[0] + s, h)
+                    merged[cid][1]["source"] = "fusion"
+                else:
+                    merged[cid] = (s, h)
+
+        add_ranked(dense_hits, "dense")
+        add_ranked(sparse_hits, "sparse")
+
+        ranked = sorted(merged.items(), key=lambda x: x[1][0], reverse=True)[: req.top_k]
+        chunk_ids = [cid for cid, _ in ranked]
+
+        # 4) 拉取 chunk 文本，并组装来源
+        hits_by_doc: Dict[int, List[int]] = {}
+        meta_by_cid: Dict[int, Dict[str, Any]] = {}
+        for cid, (score, meta) in ranked:
+            doc_id = int(meta.get("doc_id", 0))
+            if doc_id <= 0:
+                continue
+            hits_by_doc.setdefault(doc_id, []).append(cid)
+            meta_by_cid[cid] = {"score": score, **meta}
+
+        final_hits: List[RAGChunkHit] = []
+        for doc_id, cids in hits_by_doc.items():
+            chunks = await self.repo.list_chunks_by_doc(doc_id, active_only=True)
+            text_map = {ch.id: ch for ch in chunks if ch.id in set(cids)}
+            # 获取文档（补充来源信息）
+            doc_obj = await self.repo.get_document(doc_id)
+            for cid in cids:
+                ch: Optional[RAGChunkORM] = text_map.get(cid)
+                meta = meta_by_cid.get(cid, {})
+                source_type = meta.get("source_type") or (doc_obj.source_type if doc_obj else None)
+                source_uri = meta.get("source_uri") or (doc_obj.source_uri if doc_obj else None)
+                # 可访问 URL
+                source_url = None
+                if source_type == "file" and source_uri:
+                    source_url = build_file_url(str(source_uri))
+                elif source_type == "url":
+                    source_url = str(source_uri)
+
+                hit = RAGChunkHit(
+                    chunk_id=cid,
+                    doc_id=doc_id,
+                    corpus_id=req.corpus_id,
+                    score=float(meta.get("score", 0.0)),
+                    text=(ch.text if ch else meta.get("text", "")),
+                    source=meta.get("source", "fusion"),
+                    source_type=source_type,
+                    source_uri=source_uri,
+                    source_url=source_url,
+                    meta=(ch.meta if ch else {}),
+                )
+                final_hits.append(hit)
+
+        context = "\n\n".join([h.text for h in final_hits if h.text])
+
+        return RAGQueryResponse(
+            query=req.query,
+            corpus_ids=[req.corpus_id],
+            hits=final_hits,
+            context_text=context,
         )
-        doc = await self.create_document(corpus_id=corpus_id, req=create_req)
-
-        # 4. 执行入库流水线（解析 / 切片 / 向量 / ES）
-        await self.ingestion_service.ingest_document(doc_id=doc.id)
-
-        # 5. 返回最新文档状态（包含入库后的 num_chunks / status 等）
-        latest = await self.get_document(doc_id=doc.id)
-        return latest or doc

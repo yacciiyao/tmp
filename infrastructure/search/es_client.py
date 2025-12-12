@@ -2,202 +2,209 @@
 # @File: infrastructure/search/es_client.py
 # @Author: yaccii
 # @Description:
-#   ESClient 当前实现为「可切换的简化版」：
-#   - 默认：NO-OP 模式，不依赖任何 Elasticsearch 实例，不抛异常
-#   - 将来要启用 BM25 / ES，只需要在本文件中补全 TODO 部分，无需改 RAG 其它代码
+#   Elasticsearch 客户端封装（BM25）
+#   - 支持：创建索引、批量写入、搜索、删除索引
+#   - ES 关闭时自动进入 NO-OP 模式，调用安全
+#   - 与 IngestionService / RAGService 的既有调用保持兼容
 
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
+
+from elasticsearch import Elasticsearch, helpers  # type: ignore
 
 from infrastructure import mlogger
 from infrastructure.config import settings
 
 
 class ESClient:
-    """
-    统一的 ES 访问封装。
-
-    当前阶段：
-    - 默认走 no-op 模式：不真正连 ES，只打日志，避免影响 RAG 主链路
-    - 之后如需 BM25，可在本类中接入真正的 Elasticsearch / OpenSearch 客户端
-    """
-
     def __init__(self) -> None:
-        # 从配置里读一点“意向”，但即使配置了也暂时不真正调用 ES
-        # 这里用 getattr 做兜底，不强制你现在就去改 config.py / .env
-        self.enabled: bool = bool(getattr(settings, "es_enabled", False))
-        self.base_url: Optional[str] = getattr(settings, "es_url", None)
-
-        # 目前统一认为「功能关闭」，只保留日志开关
-        if not self.enabled or not self.base_url:
-            mlogger.info(
-                "ESClient",
-                "__init__",
-                msg="ES disabled (no-op mode)，当前不会真正连接 Elasticsearch",
-                es_enabled=self.enabled,
-                es_url=self.base_url,
-            )
-            self._active = False
-        else:
-            # 预留将来启用 ES 的逻辑
-            mlogger.info(
-                "ESClient",
-                "__init__",
-                msg="ES configured，但当前实现仍为 no-op，需要在 ESClient 中补全实际调用逻辑",
-                es_enabled=self.enabled,
-                es_url=self.base_url,
-            )
-            self._active = False  # 先硬关闭，避免误连半残环境
-
-    # ------------------------------------------------------------------
-    # 索引管理
-    # ------------------------------------------------------------------
-
-    async def ensure_index(self, index: Optional[str], corpus_id: int) -> str:
-        """
-        确保索引存在：
-        - 现在：no-op，只返回一个规范化索引名，不抛异常
-        - 未来：这里再加真正的索引创建逻辑（mapping / analyzer 等）
-        """
-        # 规范化索引名：优先用传入 index，否则用前缀 + corpus_id
-        es_index = index or f"vs_{corpus_id}"
+        # 是否启用
+        self._active: bool = bool(getattr(settings, "es_enabled", False))
+        self._client: Optional[Elasticsearch] = None
 
         if not self._active:
-            # 仅打 debug 级别日志，不再报异常
-            mlogger.info(
-                "ESClient",
-                "ensure_index",
-                msg="skip ensure_index (ES no-op mode)",
-                index=es_index,
-            )
-            return es_index
-
-        # TODO: 未来如果要接 ES，可以在这里实现：
-        # try:
-        #     # 1. 检查索引是否存在
-        #     # 2. 不存在则创建（含 mapping / analyzer）
-        # except Exception as e:
-        #     mlogger.warning(
-        #         "ESClient",
-        #         "ensure_index",
-        #         msg=f"ensure_index error: {e!r}",
-        #         index=es_index,
-        #     )
-        #     raise
-
-        return es_index
-
-    # ------------------------------------------------------------------
-    # 写入（索引 Chunk 文本，用于 BM25）
-    # ------------------------------------------------------------------
-
-    async def index_chunks(
-        self,
-        *,
-        index: Optional[str],
-        corpus_id: int,
-        docs: List[Dict[str, Any]],
-        refresh: bool = False,
-    ) -> None:
-        """
-        批量写入 chunk 文本到 ES：
-        - 现在：no-op，只打日志，什么都不写
-        - 将来：在这里实现 bulk API 调用
-        """
-        es_index = await self.ensure_index(index, corpus_id)
-
-        if not self._active:
-            mlogger.info(
-                "ESClient",
-                "index_chunks",
-                msg="skip index_chunks (ES no-op mode)",
-                index=es_index,
-                count=len(docs),
-            )
+            mlogger.info("ESClient", "init:noop", msg="ES disabled; running in NO-OP mode")
             return
 
-        # TODO: 未来启用 ES 时，在这里实现 bulk 写入：
-        # try:
-        #     actions = [...]
-        #     self._client.bulk(...)
-        #     if refresh:
-        #         self._client.indices.refresh(index=es_index)
-        # except Exception as e:
-        #     mlogger.warning(
-        #         "ESClient",
-        #         "index_chunks",
-        #         msg=f"index_chunks error: {e!r}",
-        #         index=es_index,
-        #         count=len(docs),
-        #     )
+        if Elasticsearch is None:
+            mlogger.warning("ESClient", "init:no_elastic_pkg", msg="elasticsearch package not installed; NO-OP mode")
+            self._active = False
+            return
 
-    # ------------------------------------------------------------------
-    # 检索（RAG 检索阶段的 BM25 分支）
-    # ------------------------------------------------------------------
+        scheme = getattr(settings, "es_scheme", "http")
+        host = getattr(settings, "es_host", "127.0.0.1")
+        port = int(getattr(settings, "es_port", 9200))
+        username = getattr(settings, "es_username", "") or None
+        password = getattr(settings, "es_password", "") or None
 
-    async def search(
+        url = f"{scheme}://{host}:{port}"
+        kwargs: Dict[str, Any] = {"hosts": [url]}
+        if username and password:
+            kwargs["basic_auth"] = (username, password)  # elasticsearch-py 8.x
+
+        try:
+            self._client = Elasticsearch(**kwargs)
+            # 触发一次 info，验证连接
+            self._client.info()
+            mlogger.info("ESClient", "init:ok", url=url)
+        except Exception as e:
+            mlogger.warning("ESClient", "init:fail", url=url, error=str(e))
+            self._client = None
+            self._active = False
+
+        self.index_prefix = (getattr(settings, "es_index_prefix", "") or "").strip()
+
+    # -------------------- 内部：索引名与映射 --------------------
+
+    def _full_index(self, name: str) -> str:
+        if self.index_prefix:
+            return f"{self.index_prefix}_{name}"
+        return name
+
+    @staticmethod
+    def _mappings() -> Dict[str, Any]:
+        # 简单 BM25 配置；text 字段作为全文域
+        return {
+            "settings": {
+                "number_of_shards": int(getattr(settings, "es_number_of_shards", 1)),
+                "number_of_replicas": int(getattr(settings, "es_number_of_replicas", 0)),
+                "analysis": {
+                    "analyzer": {
+                        "default": {"type": "standard"}
+                    }
+                }
+            },
+            "mappings": {
+                "dynamic": "false",
+                "properties": {
+                    "text": {"type": "text"},
+                    "corpus_id": {"type": "long"},
+                    "doc_id": {"type": "long"},
+                    "chunk_id": {"type": "long"},
+                    "owner_id": {"type": "long"},
+                    "source_type": {"type": "keyword"},
+                    "source_uri": {"type": "keyword"},
+                    "file_name": {"type": "keyword"},
+                    "mime_type": {"type": "keyword"},
+                },
+            },
+        }
+
+    # -------------------- 同步 API（供 Service 直接调用） --------------------
+
+    def create_index_if_not_exists(self, index: str) -> None:
+        """
+        创建索引（若不存在）。
+        """
+        if not self._active or self._client is None:
+            mlogger.info("ESClient", "create_index:noop", index=index)
+            return
+
+        idx = self._full_index(index)
+        try:
+            if not self._client.indices.exists(index=idx):  # type: ignore
+                self._client.indices.create(index=idx, **self._mappings())  # type: ignore
+                mlogger.info("ESClient", "create_index", index=idx)
+        except Exception as e:
+            mlogger.warning("ESClient", "create_index:error", index=idx, error=str(e))
+
+    def index_documents(self, index: str, docs: List[Dict[str, Any]]) -> None:
+        """
+        批量写入 Chunk 文档。
+        docs 需要包含：id, text, corpus_id, doc_id, chunk_id, owner_id, source_type, source_uri, file_name, mime_type
+        """
+        if not self._active or self._client is None or not docs:
+            if not docs:
+                mlogger.info("ESClient", "index_documents:skip", msg="empty docs")
+            else:
+                mlogger.info("ESClient", "index_documents:noop", index=index)
+            return
+
+        idx = self._full_index(index)
+        actions = (
+            {
+                "_op_type": "index",
+                "_index": idx,
+                "_id": d.get("id"),
+                "text": d.get("text") or "",
+                "corpus_id": int(d.get("corpus_id", 0)),
+                "doc_id": int(d.get("doc_id", 0)),
+                "chunk_id": int(d.get("chunk_id", 0)),
+                "owner_id": int(d.get("owner_id", 0)),
+                "source_type": d.get("source_type") or "",
+                "source_uri": d.get("source_uri") or "",
+                "file_name": (d.get("file_name") or "")[:255],
+                "mime_type": (d.get("mime_type") or "")[:100],
+            }
+            for d in docs
+        )
+        try:
+            helpers.bulk(self._client, actions, refresh="false")  # type: ignore
+            mlogger.info("ESClient", "bulk_index_ok", index=idx, count=len(docs))
+        except Exception as e:
+            mlogger.warning("ESClient", "bulk_index_error", index=idx, error=str(e))
+
+    def search(
         self,
-        *,
-        index: Optional[str],
-        corpus_id: int,
+        index: str,
         query: str,
-        top_k: int = 20,
+        top_k: int = 8,
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        BM25 检索：
-        - 现在：no-op，直接返回空列表
-        - 将来：在这里接 ES search + 打分逻辑
+        召回文本：返回统一结构：
+        [{"chunk_id": int, "doc_id": int, "score": float, "text": str, ...}, ...]
         """
-        es_index = index or f"vs_{corpus_id}"
-
-        if not self._active:
-            mlogger.info(
-                "ESClient",
-                "search",
-                msg="skip search (ES no-op mode)",
-                index=es_index,
-                query=query,
-                top_k=top_k,
-            )
+        if not self._active or self._client is None or not query.strip():
             return []
 
-        # TODO: 未来启用 ES 时，实现搜索逻辑：
-        # try:
-        #     body = {...}
-        #     resp = self._client.search(index=es_index, body=body)
-        #     return [...]
-        # except Exception as e:
-        #     mlogger.warning(
-        #         "ESClient",
-        #         "search",
-        #         msg=f"search error: {e!r}",
-        #         index=es_index,
-        #     )
-        #     return []
+        idx = self._full_index(index)
+        must_clause: List[Dict[str, Any]] = [
+            {"multi_match": {"query": query, "fields": ["text"]}}
+        ]
+        filter_clause: List[Dict[str, Any]] = []
+        if filters:
+            for k, v in filters.items():
+                filter_clause.append({"term": {k: v}})
 
-    # ------------------------------------------------------------------
-    # 可选：删除索引（后台管理用）
-    # ------------------------------------------------------------------
+        body = {"query": {"bool": {"must": must_clause, "filter": filter_clause}}}
+        try:
+            resp = self._client.search(index=idx, query=body["query"], size=top_k)  # type: ignore
+        except Exception as e:
+            mlogger.warning("ESClient", "search:error", index=idx, error=str(e))
+            return []
 
-    async def delete_index(self, index: str) -> None:
-        if not self._active:
-            mlogger.info(
-                "ESClient",
-                "delete_index",
-                msg="skip delete_index (ES no-op mode)",
-                index=index,
+        hits = resp.get("hits", {}).get("hits", [])  # type: ignore
+        out: List[Dict[str, Any]] = []
+        for h in hits:
+            src = h.get("_source", {})  # type: ignore
+            score = float(h.get("_score") or 0.0)  # type: ignore
+            out.append(
+                {
+                    "chunk_id": int(src.get("chunk_id", 0)),
+                    "doc_id": int(src.get("doc_id", 0)),
+                    "score": score,
+                    "text": src.get("text") or "",
+                    "source_type": src.get("source_type"),
+                    "source_uri": src.get("source_uri"),
+                    "file_name": src.get("file_name"),
+                    "mime_type": src.get("mime_type"),
+                }
             )
-            return
+        return out
 
-        # TODO: 未来启用 ES 时实现：
-        # try:
-        #     self._client.indices.delete(index=index, ignore=[400, 404])
-        # except Exception as e:
-        #     mlogger.warning(
-        #         "ESClient",
-        #         "delete_index",
-        #         msg=f"delete_index error: {e!r}",
-        #         index=index,
-        #     )
+    def delete_index(self, index: str) -> None:
+        """
+        删除索引（后台管理）。
+        """
+        if not self._active or self._client is None:
+            mlogger.info("ESClient", "delete_index:noop", index=index)
+            return
+        idx = self._full_index(index)
+        try:
+            if self._client.indices.exists(index=idx):  # type: ignore
+                self._client.indices.delete(index=idx, ignore_unavailable=True)  # type: ignore
+                mlogger.info("ESClient", "delete_index_ok", index=idx)
+        except Exception as e:
+            mlogger.warning("ESClient", "delete_index_error", index=idx, error=str(e))

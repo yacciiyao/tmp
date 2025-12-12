@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Dict, Optional
 
-from infrastructure.vector_store.vector_store_base import VectorStore
+from infrastructure.vector_store.base import VectorStore
 
 
 class VectorStoreManager:
@@ -29,11 +29,11 @@ class VectorStoreManager:
             return self._stores[store_type]
 
         if store_type == "faiss":
-            from infrastructure.vector_store.faiss_store import FaissVectorStore
+            from infrastructure.vector_store.impl_faiss import FaissVectorStore
 
             store: VectorStore = FaissVectorStore()
         elif store_type == "milvus":
-            from infrastructure.vector_store.milvus_store import MilvusVectorStore
+            from infrastructure.vector_store.impl_milvus import MilvusVectorStore
 
             store = MilvusVectorStore()
         else:
