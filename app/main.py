@@ -1,43 +1,55 @@
 # -*- coding: utf-8 -*-
-# @File: app/main.py
+# @File: main.py
 # @Author: yaccii
-# @Description: FastAPI Application Entry
+# @Time: 2025-12-14 19:52
+# @Description:
 
 from __future__ import annotations
 
-from importlib import import_module
-from typing import Any, Optional
+from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse, RedirectResponse
-from starlette.staticfiles import StaticFiles
 
-from application.auth.auth_service import AuthService
-from application.common.errors import AppError
-from infrastructure import mlogger
-from infrastructure.config import settings
-from infrastructure.db.base import AsyncSessionFactory, init_db
+from app.routers import auth_router
+from app.routers import rag_router
+from domains.error_domain import AppError
+from infrastructures.db.orm.orm_base import init_db, AsyncSessionFactory
+from infrastructures.vconfig import config
+from infrastructures.vlogger import init_logging, logger
+from services.auth_service import AuthService
+from infrastructures.db.repository.rag_repository import RagRepository
 
 
-def _include_router_safely(
-    api: APIRouter,
-    module_path: str,
-    router_attr: str = "router",
-    prefix: str = "",
-    tags: Optional[list[str]] = None,
-) -> None:
-    """
-    - 避免因为“某个 router 文件缺失/导入失败”导致整个应用启动失败
-    - 必要模块仍建议在 CI 中保证存在；这里是运行期的韧性兜底
-    """
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+
+    init_logging(config.log_level)
+
+    # 1) 建表
+    await init_db()
+    logger.info("database schema ensured")
+
+    # 2) 默认 admin
+    async with AsyncSessionFactory() as db:
+        auth_service = AuthService()
+        await auth_service.ensure_default_admin(db)
+    logger.info("default admin ensured")
+
+    # 3) 默认 space（documents.kb_space 有外键约束，建议启动时保证 default 存在）
+    repo = RagRepository()
+    async with AsyncSessionFactory() as db:
+        async with db.begin():
+            existing = await repo.get_space(db, kb_space="default")
+            if existing is None:
+                await repo.create_space(db, kb_space="default", display_name="Default", description="default", enabled=1, status=1)
+    logger.info("default space ensured")
+
     try:
-        mod = import_module(module_path)
-        router = getattr(mod, router_attr)
-        api.include_router(router, prefix=prefix, tags=tags)
-        mlogger.info("App", "router_loaded", module=module_path)
-    except Exception as e:
-        mlogger.warning("App", "router_skipped", module=module_path, error=str(e))
+        yield
+    finally:
+        logger.info("application shutdown")
 
 
 def create_app() -> FastAPI:
@@ -47,7 +59,11 @@ def create_app() -> FastAPI:
         docs_url="/api/docs",
         redoc_url="/api/redoc",
         openapi_url="/api/openapi.json",
+        lifespan=lifespan,
     )
+
+    # optional request context + access logging
+    # app.add_middleware(RequestContextMiddleware)
 
     # ---------- Global error handler ----------
     @app.exception_handler(AppError)
@@ -55,22 +71,21 @@ def create_app() -> FastAPI:
         return JSONResponse(status_code=exc.http_status, content=exc.to_response().model_dump())
 
     # ---------- CORS ----------
-    origins = settings.cors_origins or []
-    # 若允许 "*"，则必须关闭 allow_credentials（否则浏览器拒绝）
-    allow_credentials = settings.cors_allow_credentials if origins != ["*"] else False
-
+    cors = config.cors_origins.strip()
+    if cors == "*":
+        origins = ["*"]
+    else:
+        origins = [o.strip() for o in cors.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=origins if origins else [],
-        allow_credentials=allow_credentials,
+        allow_origins=origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
-    # ---------- Static frontend ----------
-    # 兼容两种前缀：/web 与 /static（你当前 index 重定向用到了 /static，但 mount 用的是 /web）
-    app.mount("/web", StaticFiles(directory="web"), name="web")
-    app.mount("/static", StaticFiles(directory="web"), name="static")
+    # # ---------- Static frontend ----------
+    # app.mount("/web", StaticFiles(directory="web"), name="web")
+    # app.mount("/static", StaticFiles(directory="web"), name="static")
 
     api = APIRouter(prefix="/api")
 
@@ -78,43 +93,13 @@ def create_app() -> FastAPI:
     async def health_check():
         return {"status": "ok"}
 
-    # 核心业务路由（缺失则跳过并告警）
-    _include_router_safely(api, "app.routers.auth_router")
-    _include_router_safely(api, "app.routers.chat_router")
-    _include_router_safely(api, "app.routers.rag_router")
-    _include_router_safely(api, "app.routers.model_router")
-
-    # 可选业务路由（存在即加载）
-    _include_router_safely(api, "app.routers.agent_router", prefix="/agents", tags=["agents"])
-    _include_router_safely(api, "app.routers.brand_router", prefix="/brands", tags=["brands"])
-    _include_router_safely(api, "app.routers.project_router", prefix="/projects", tags=["projects"])
-    _include_router_safely(api, "app.routers.file_router", prefix="/files", tags=["files"])
-    _include_router_safely(api, "app.routers.amazon_router", prefix="/amazon", tags=["amazon"])
-
+    api.include_router(auth_router.router)
+    api.include_router(rag_router.router)
     app.include_router(api)
 
     @app.get("/")
     async def index():
-        # 优先跳到 /web；/static 也可用
         return RedirectResponse(url="/web/chat.html", status_code=302)
-
-    @app.on_event("startup")
-    async def on_startup() -> None:
-        mlogger.configure_logging(settings.log_level)
-
-        # 1) 建表
-        await init_db()
-        mlogger.info("App", "startup", msg="database schema ensured")
-
-        # 2) 默认 admin
-        async with AsyncSessionFactory() as db:
-            auth_service = AuthService()
-            await auth_service.ensure_default_admin(db)
-        mlogger.info("App", "startup", msg="default admin ensured")
-
-    @app.on_event("shutdown")
-    async def on_shutdown() -> None:
-        mlogger.info("App", "shutdown", msg="application shutdown")
 
     return app
 

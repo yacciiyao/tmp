@@ -1,0 +1,123 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
+from typing import Any, Dict, List, Tuple
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from domains.error_domain import AppError
+from domains.rag_domain import SearchRequest, SearchResponse
+from infrastructures.db.repository.rag_repository import RagRepository
+from infrastructures.vconfig import config
+
+
+class SearchService:
+    def __init__(self, repo: RagRepository, embedder: Any, milvus_index: Any, es_index: Any):
+        self.repo = repo
+        self.embedder = embedder
+        self.milvus_index = milvus_index
+        self.es_index = es_index
+
+    def _backend(self) -> str:
+        return config.index_backend.strip().lower()
+
+    def _es_enabled(self) -> bool:
+        return bool(config.es_enabled)
+
+    def _milvus_enabled(self) -> bool:
+        return bool(config.milvus_enabled)
+
+    async def search(self, db: AsyncSession, req: SearchRequest) -> SearchResponse:
+        query = (req.query or "").strip()
+        if not query:
+            raise AppError(code="search.empty_query", message="query is required", http_status=400)
+
+        kb_space = (req.kb_space or "default").strip()
+        top_k = int(req.top_k or 10)
+        backend = self._backend()
+
+        es_ok = self._es_enabled()
+        vec_ok = self._milvus_enabled()
+
+        # graceful degradation: keep behaviour simple and predictable
+        if backend == "vector" and not vec_ok:
+            raise AppError(code="search.vector_disabled", message="Milvus is disabled", http_status=503)
+        if backend == "bm25" and not es_ok:
+            raise AppError(code="search.bm25_disabled", message="Elasticsearch is disabled", http_status=503)
+        if backend == "hybrid":
+            if not es_ok and vec_ok:
+                backend = "vector"
+            elif es_ok and not vec_ok:
+                backend = "bm25"
+            elif not es_ok and not vec_ok:
+                raise AppError(code="search.no_index", message="Both Milvus and Elasticsearch are disabled", http_status=503)
+
+        qvec: List[float] = []
+        vec_pairs: List[Tuple[str, float]] = []
+        es_pairs: List[Tuple[str, float]] = []
+
+        if backend in {"vector", "hybrid"}:
+            qvec = await self.embedder.embed_query(query)
+            vec_pairs = await self.milvus_index.search(kb_space=kb_space, query_vector=qvec, top_k=top_k * 5)
+
+        if backend in {"bm25", "hybrid"}:
+            es_pairs = await self.es_index.search(kb_space=kb_space, query=query, top_k=top_k * 5)
+
+        fused = self._merge(vec_pairs, es_pairs, backend)
+        chunk_ids = [cid for cid, _ in fused[: top_k * 5]]
+
+        chunks = await self.repo.get_searchable_chunks_by_ids(db, chunk_ids=chunk_ids, kb_space=kb_space)
+        by_id = {str(c.chunk_id): c for c in chunks}
+
+        hits: List[Dict[str, Any]] = []
+        seen_doc: Dict[int, int] = {}
+
+        max_per_doc = int(config.search_max_per_doc)
+
+        for cid, score in fused:
+            c = by_id.get(str(cid))
+            if not c:
+                continue
+            if seen_doc.get(c.document_id, 0) >= max_per_doc:
+                continue
+            seen_doc[c.document_id] = seen_doc.get(c.document_id, 0) + 1
+            hits.append(
+                {
+                    "chunk_id": c.chunk_id,
+                    "document_id": c.document_id,
+                    "kb_space": c.kb_space,
+                    "index_version": c.index_version,
+                    "score": float(score),
+                    "content": c.content,
+                    "meta": c.meta,
+                }
+            )
+            if len(hits) >= top_k:
+                break
+
+        return SearchResponse(kb_space=kb_space, query=query, top_k=top_k, backend=backend, hits=hits)
+
+    @staticmethod
+    def _merge(vec_pairs: List[Tuple[str, float]], es_pairs: List[Tuple[str, float]], backend: str) -> List[Tuple[str, float]]:
+        # Keep behaviour stable:
+        # - vector: use vec score
+        # - bm25: use es score
+        # - hybrid: RRF fusion
+        if backend == "vector":
+            return vec_pairs
+        if backend == "bm25":
+            return es_pairs
+
+        # hybrid: Reciprocal Rank Fusion
+        def rrf(pairs: List[Tuple[str, float]], k: int = 60) -> Dict[str, float]:
+            out: Dict[str, float] = {}
+            for rank, (cid, _) in enumerate(pairs, start=1):
+                out[str(cid)] = out.get(str(cid), 0.0) + 1.0 / (k + rank)
+            return out
+
+        a = rrf(vec_pairs)
+        b = rrf(es_pairs)
+        keys = set(a.keys()) | set(b.keys())
+        fused = [(cid, a.get(cid, 0.0) + b.get(cid, 0.0)) for cid in keys]
+        fused.sort(key=lambda x: x[1], reverse=True)
+        return fused

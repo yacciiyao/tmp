@@ -1,0 +1,117 @@
+# -*- coding: utf-8 -*-
+# @File: auth_service.py
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Optional, cast
+
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from domains.error_domain import AppError
+from domains.user_domain import UserRole
+from infrastructures.db.orm.user_orm import UserORM
+from infrastructures.db.repository.user_repository import UserRepository
+from infrastructures.vconfig import config
+from infrastructures.vlogger import logger
+
+_pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+
+
+class AuthService:
+    def __init__(self) -> None:
+        self._secret_key: str = config.jwt_secret_key
+        self._algorithm: str = config.jwt_algorithm
+        self._access_token_expires_minutes: int = int(config.jwt_expire_minutes)
+
+        self._default_admin_username: str = config.default_admin_username
+        self._default_admin_password: str = config.default_admin_password
+
+        self._user_repo = UserRepository()
+
+    def hash_password(self, password: str) -> str:
+        return _pwd_context.hash(password)
+
+    def verify_password(self, plain_password: str, password_hash: str) -> bool:
+        return _pwd_context.verify(plain_password, password_hash)
+
+    def _create_token(self, subject: str, extra_claims: Optional[Dict[str, Any]] = None) -> str:
+        now = datetime.now(timezone.utc)
+        expire = now + timedelta(minutes=self._access_token_expires_minutes)
+        to_encode: Dict[str, Any] = {"sub": subject, "iat": int(now.timestamp()), "exp": int(expire.timestamp())}
+        if extra_claims:
+            to_encode.update(extra_claims)
+        return jwt.encode(to_encode, self._secret_key, algorithm=self._algorithm)
+
+    def decode_token(self, token: str) -> Dict[str, Any]:
+        try:
+            return jwt.decode(token, self._secret_key, algorithms=[self._algorithm])
+        except JWTError as exc:
+            raise AppError(code="auth.invalid_token", message="Invalid or expired token", http_status=401) from exc
+
+    def create_access_token_for_user(self, user: UserORM) -> str:
+        return self._create_token(
+            subject=str(user.user_id),
+            extra_claims={"user_id": user.user_id, "username": user.username, "role": user.role, "status": user.status},
+        )
+
+    async def get_user_by_token(self, db: AsyncSession, token: str) -> UserORM:
+        payload = self.decode_token(token)
+
+        sub = payload.get("sub")
+        if not sub:
+            raise AppError(code="auth.invalid_token", message="Token payload missing subject", http_status=401)
+
+        try:
+            user_id = int(str(sub))
+        except ValueError as exc:
+            raise AppError(code="auth.invalid_token", message="Invalid token subject", http_status=401) from exc
+
+        user = await self._user_repo.get_by_id(db, user_id)
+        if not user or int(user.status) != 1:
+            raise AppError(code="auth.user_not_found", message="User not found or inactive", http_status=401)
+
+        return user
+
+    async def authenticate(self, db: AsyncSession, username: str, password: str) -> Optional[UserORM]:
+        user = await self._user_repo.get_by_username(db, username)
+        if not user or int(user.status) != 1:
+            return None
+
+        pw_hash = cast(str, user.password_hash)
+        if not self.verify_password(password, pw_hash):
+            return None
+
+        return user
+
+    async def authenticate_or_raise(self, db: AsyncSession, username: str, password: str) -> UserORM:
+        user = await self.authenticate(db=db, username=username, password=password)
+        if not user:
+            raise AppError(
+                code="auth.invalid_credentials",
+                message="Invalid username or password",
+                http_status=401,
+            )
+        return user
+
+    async def ensure_default_admin(self, db: AsyncSession) -> None:
+        if config.app_env != "dev" and self._default_admin_password == "admin123":
+            raise RuntimeError("DEFAULT_ADMIN_PASSWORD must be rotated in non-dev environments.")
+
+        existing = await self._user_repo.get_by_username(db, self._default_admin_username)
+        if existing:
+            return
+
+        password_hash = self.hash_password(self._default_admin_password)
+        user = await self._user_repo.create_user(
+            db=db,
+            username=self._default_admin_username,
+            password_hash=password_hash,
+            role=UserRole.admin.value,
+            status=1,
+        )
+        await db.commit()
+
+        logger.warning("default admin created username=%s (password not logged)", user.username)
