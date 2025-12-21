@@ -32,14 +32,15 @@ class TextParser(Parser):
         try:
             with open(path, "rb") as f:
                 b = f.read(4096)
-            if not b:
-                return False
-            if b"\x00" in b:
-                return True
-            printable = sum(1 for x in b if 32 <= x <= 126 or x in (9, 10, 13))
-            return printable / max(1, len(b)) < 0.70
-        except Exception:
+        except OSError as e:
+            raise ParseError(f"read file failed: {e}", retryable=False) from e
+
+        if not b:
             return False
+        if b"\x00" in b:
+            return True
+        printable = sum(1 for x in b if 32 <= x <= 126 or x in (9, 10, 13))
+        return printable / max(1, len(b)) < 0.70
 
     def _read_text(self, path: str) -> str:
         try:

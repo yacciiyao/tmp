@@ -2,8 +2,6 @@
 # @File: storage_router.py
 # @Author: yaccii
 # @Time: 2025-12-19 14:05
-# @Description:
-# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 from infrastructures.storage.local_storage import LocalStorage

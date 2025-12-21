@@ -169,17 +169,17 @@ class SimpleChunker:
             if "page" in loc:
                 try:
                     pages.append(int(loc["page"]))
-                except Exception:
+                except (TypeError, ValueError):
                     pass
             if "start" in loc:
                 try:
                     starts.append(float(loc["start"]))
-                except Exception:
+                except (TypeError, ValueError):
                     pass
             if "end" in loc:
                 try:
                     ends.append(float(loc["end"]))
-                except Exception:
+                except (TypeError, ValueError):
                     pass
             if "bbox" in loc:
                 bboxes.append(loc["bbox"])

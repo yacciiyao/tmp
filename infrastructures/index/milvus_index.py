@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, connections, utility
 
@@ -126,7 +126,7 @@ class MilvusIndex:
         query_vector: List[float],
         top_k: int,
         document_ids: Optional[List[int]] = None,
-    ) -> List[str]:
+    ) -> List[Tuple[str, float]]:
         if not config.milvus_enabled:
             return []
 
@@ -155,10 +155,12 @@ class MilvusIndex:
             output_fields=["chunk_id"],
         )
 
-        chunk_ids: List[str] = []
+        pairs: List[Tuple[str, float]] = []
         for hits in results:
             for h in hits:
                 cid = h.entity.get("chunk_id")
-                if cid is not None:
-                    chunk_ids.append(str(cid))
-        return chunk_ids
+                if cid is None:
+                    continue
+                pairs.append((str(cid), float(h.distance)))
+
+        return pairs

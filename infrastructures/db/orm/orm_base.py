@@ -25,23 +25,42 @@ class TimestampMixin:
     )
 
 
-engine: AsyncEngine = create_async_engine(
-    str(config.db_url),
-    echo=bool(config.sql_echo),
-    pool_pre_ping=True,
-)
+_engine: AsyncEngine | None = None
+_session_factory: async_sessionmaker[AsyncSession] | None = None
 
-AsyncSessionFactory: async_sessionmaker[AsyncSession] = async_sessionmaker(
-    bind=engine,
-    expire_on_commit=False,
-    autoflush=False,
-    class_=AsyncSession,
-)
+
+def _ensure_db_engine() -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
+    global _engine, _session_factory
+    if _engine is not None and _session_factory is not None:
+        return _engine, _session_factory
+
+    _engine = create_async_engine(
+        str(config.db_url),
+        echo=bool(config.sql_echo),
+        pool_pre_ping=True,
+    )
+    _session_factory = async_sessionmaker(
+        bind=_engine,
+        expire_on_commit=False,
+        autoflush=False,
+        class_=AsyncSession,
+    )
+    return _engine, _session_factory
+
+
+class _LazyAsyncSessionFactory:
+    def __call__(self, *args, **kwargs):
+        _, factory = _ensure_db_engine()
+        return factory(*args, **kwargs)
+
+
+AsyncSessionFactory = _LazyAsyncSessionFactory()
 
 
 async def init_db() -> None:
     from infrastructures.db.orm import user_orm  # noqa: F401
     from infrastructures.db.orm import rag_orm  # noqa: F401
 
+    engine, _ = _ensure_db_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

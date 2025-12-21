@@ -32,7 +32,7 @@ class SearchService:
         if not query:
             raise AppError(code="search.empty_query", message="query is required", http_status=400)
 
-        kb_space = (req.kb_space or "default").strip()
+        kb_space = (req.kb_space or "default").strip() or "default"
         top_k = int(req.top_k or 10)
         backend = self._backend()
 
@@ -61,10 +61,18 @@ class SearchService:
             vec_pairs = await self.milvus_index.search(kb_space=kb_space, query_vector=qvec, top_k=top_k * 5)
 
         if backend in {"bm25", "hybrid"}:
-            es_pairs = await self.es_index.search(kb_space=kb_space, query=query, top_k=top_k * 5)
+            es_hits = await self.es_index.search(kb_space=kb_space, query=query, top_k=top_k * 5)
+            es_pairs = [(str(h.chunk_id), float(h.score)) for h in es_hits]
 
         fused = self._merge(vec_pairs, es_pairs, backend)
-        chunk_ids = [cid for cid, _ in fused[: top_k * 5]]
+        chunk_ids: List[str] = []
+        seen_ids = set()
+        for cid, _ in fused[: top_k * 5]:
+            cid = str(cid)
+            if cid in seen_ids:
+                continue
+            seen_ids.add(cid)
+            chunk_ids.append(cid)
 
         chunks = await self.repo.get_searchable_chunks_by_ids(db, chunk_ids=chunk_ids, kb_space=kb_space)
         by_id = {str(c.chunk_id): c for c in chunks}
@@ -89,7 +97,7 @@ class SearchService:
                     "index_version": c.index_version,
                     "score": float(score),
                     "content": c.content,
-                    "meta": c.meta,
+                    "meta": c.locator,
                 }
             )
             if len(hits) >= top_k:

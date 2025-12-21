@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# @File: rag_router.py
 
 from __future__ import annotations
 
