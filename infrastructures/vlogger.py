@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# @Author: yaccii
+# @Description:
 
 from __future__ import annotations
 
@@ -6,13 +8,11 @@ import logging
 import time
 import uuid
 from contextvars import ContextVar
-
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
-from infrastructures.vconfig import config
-
+from infrastructures.vconfig import vconfig
 
 _request_id_var: ContextVar[str] = ContextVar("request_id", default="-")
 
@@ -49,7 +49,7 @@ def init_logging(level: str) -> None:
         lg.handlers.clear()
         lg.propagate = True
 
-    logger.info("logging initialized level=%s", lvl)
+    vlogger.info("logging initialized level=%s", lvl)
 
 
 def get_logger(name: str) -> logging.Logger:
@@ -62,11 +62,11 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         rid = "-"
 
-        header_name = config.request_id_header
+        header_name = vconfig.request_id_header
         incoming = request.headers.get(header_name)
         if incoming and incoming.strip():
             rid = incoming.strip()
-        elif config.generate_request_id:
+        elif vconfig.generate_request_id:
             rid = uuid.uuid4().hex
 
         token = _request_id_var.set(rid)
@@ -85,9 +85,9 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                 if rid != "-":
                     response.headers[header_name] = rid
 
-            if config.log_requests:
+            if vconfig.log_requests:
                 status = getattr(response, "status_code", "EXC")
-                logger.info(
+                vlogger.info(
                     "http %s %s -> %s %sms",
                     request.method,
                     request.url.path,
@@ -96,4 +96,4 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                 )
 
 
-logger = logging.getLogger("app")
+vlogger = get_logger("VAA")

@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-# @File: sbert_embedder.py
 # @Author: yaccii
-# @Time: 2025-12-17 16:52
 # @Description:
-# -*- coding: utf-8 -*-
+
 from __future__ import annotations
+
 from typing import List
+
 from sentence_transformers import SentenceTransformer
 
 

@@ -4,13 +4,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Optional, List, Dict, Any, Tuple
 
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from domains.error_domain import AppError
-from infrastructures.db.orm.rag_orm import ChunkORM, DocumentORM, IngestJobORM, SpaceORM
+from infrastructures.db.orm.rag_orm import MetaRagSpacesORM, MetaRagDocumentsORM, OpsRagIngestJobsORM, StgRagChunksORM
 from infrastructures.db.repository.rag_repository import RagRepository
 from infrastructures.storage.storage_base import Storage
 
@@ -20,19 +20,16 @@ class RagService:
         self.repo = repo
         self.storage = storage
 
-    # ----------------------------
-    # Space (KB) management
-    # ----------------------------
     async def create_space(
-        self,
-        db: AsyncSession,
-        *,
-        kb_space: str,
-        display_name: str,
-        description: Optional[str] = None,
-        enabled: int = 1,
-        status: int = 1,
-    ) -> SpaceORM:
+            self,
+            db: AsyncSession,
+            *,
+            kb_space: str,
+            display_name: str,
+            description: Optional[str] = None,
+            enabled: int = 1,
+            status: int = 1,
+    ) -> MetaRagSpacesORM:
         existing = await self.repo.get_space(db, kb_space=kb_space)
         if existing is not None:
             raise AppError(code="rag.space_exists", message="Space already exists", http_status=400)
@@ -46,32 +43,32 @@ class RagService:
             status=int(status),
         )
 
-    async def get_space(self, db: AsyncSession, *, kb_space: str) -> SpaceORM:
+    async def get_space(self, db: AsyncSession, *, kb_space: str) -> MetaRagSpacesORM:
         space = await self.repo.get_space(db, kb_space=kb_space)
         if space is None:
             raise AppError(code="rag.space_not_found", message="Space not found", http_status=404)
         return space
 
     async def list_spaces(
-        self,
-        db: AsyncSession,
-        *,
-        enabled: Optional[int] = None,
-        status: Optional[int] = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> List[SpaceORM]:
+            self,
+            db: AsyncSession,
+            *,
+            enabled: Optional[int] = None,
+            status: Optional[int] = None,
+            limit: int = 50,
+            offset: int = 0,
+    ) -> List[MetaRagSpacesORM]:
         return await self.repo.list_spaces(db, enabled=enabled, status=status, limit=limit, offset=offset)
 
     async def update_space(
-        self,
-        db: AsyncSession,
-        *,
-        kb_space: str,
-        display_name: Optional[str] = None,
-        description: Optional[str] = None,
-        enabled: Optional[int] = None,
-        status: Optional[int] = None,
+            self,
+            db: AsyncSession,
+            *,
+            kb_space: str,
+            display_name: Optional[str] = None,
+            description: Optional[str] = None,
+            enabled: Optional[int] = None,
+            status: Optional[int] = None,
     ) -> int:
         return await self.repo.update_space(
             db,
@@ -89,7 +86,7 @@ class RagService:
         space_rows, doc_rows = await self.repo.delete_space_cascade(db, kb_space=kb_space)
         return {"space_updated": int(space_rows), "documents_deleted": int(doc_rows)}
 
-    async def _require_space_available(self, db: AsyncSession, *, kb_space: str) -> SpaceORM:
+    async def _require_space_available(self, db: AsyncSession, *, kb_space: str) -> MetaRagSpacesORM:
         space = await self.repo.get_space(db, kb_space=kb_space)
         if space is None:
             raise AppError(code="rag.space_not_found", message="Space not found", http_status=404)
@@ -97,19 +94,16 @@ class RagService:
             raise AppError(code="rag.space_disabled", message="Space is disabled", http_status=400)
         return space
 
-    # ----------------------------
-    # Document management
-    # ----------------------------
     async def upload_and_create_job(
-        self,
-        db: AsyncSession,
-        *,
-        upload_file: UploadFile,
-        kb_space: str = "default",
-        uploader_user_id: int,
-        pipeline_version: str = "v1",
-        max_retries: int = 3,
-    ) -> Tuple[DocumentORM, IngestJobORM]:
+            self,
+            db: AsyncSession,
+            *,
+            upload_file: UploadFile,
+            kb_space: str = "default",
+            uploader_user_id: int,
+            pipeline_version: str = "v1",
+            max_retries: int = 3,
+    ) -> Tuple[MetaRagDocumentsORM, OpsRagIngestJobsORM]:
         await self._require_space_available(db, kb_space=kb_space)
 
         stored = await self.storage.save_upload(
@@ -139,20 +133,21 @@ class RagService:
 
         return doc, job
 
-    async def get_document(self, db: AsyncSession, *, document_id: int, include_deleted: bool = False) -> DocumentORM:
+    async def get_document(self, db: AsyncSession, *, document_id: int,
+                           include_deleted: bool = False) -> MetaRagDocumentsORM:
         doc = await self.repo.get_document(db, document_id=document_id, include_deleted=include_deleted)
         if doc is None:
             raise AppError(code="rag.document_not_found", message="Document not found", http_status=404)
         return doc
 
     async def list_documents(
-        self,
-        db: AsyncSession,
-        *,
-        kb_space: Optional[str] = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> List[DocumentORM]:
+            self,
+            db: AsyncSession,
+            *,
+            kb_space: Optional[str] = None,
+            limit: int = 50,
+            offset: int = 0,
+    ) -> List[MetaRagDocumentsORM]:
         return await self.repo.list_documents(db, kb_space=kb_space, limit=limit, offset=offset)
 
     async def update_document_filename(self, db: AsyncSession, *, document_id: int, filename: str) -> int:
@@ -176,38 +171,32 @@ class RagService:
         await self.repo.cancel_jobs_by_document(db, document_id=int(document_id), last_error="document deleted")
         return int(rows)
 
-    # ----------------------------
-    # Jobs
-    # ----------------------------
-    async def get_job(self, db: AsyncSession, *, job_id: int) -> IngestJobORM:
+    async def get_job(self, db: AsyncSession, *, job_id: int) -> OpsRagIngestJobsORM:
         job = await self.repo.get_job(db, job_id=job_id)
         if job is None:
             raise AppError(code="rag.job_not_found", message="Job not found", http_status=404)
         return job
 
     async def list_jobs(
-        self,
-        db: AsyncSession,
-        *,
-        kb_space: Optional[str] = None,
-        status: Optional[int] = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> List[IngestJobORM]:
-        return await self.repo.list_jobs(db, kb_space=kb_space, status=status, limit=int(limit), offset=int(offset))
+            self,
+            db: AsyncSession,
+            *,
+            kb_space: Optional[str] = None,
+            statuses: Optional[List[int]] = None,
+            limit: int = 50,
+            offset: int = 0,
+    ) -> List[OpsRagIngestJobsORM]:
+        return await self.repo.list_jobs(db, kb_space=kb_space, statuses=statuses, limit=int(limit), offset=int(offset))
 
-    # ----------------------------
-    # Chunks
-    # ----------------------------
     async def list_chunks(
-        self,
-        db: AsyncSession,
-        *,
-        document_id: int,
-        index_version: Optional[int] = None,
-        limit: int = 200,
-        offset: int = 0,
-    ) -> List[ChunkORM]:
+            self,
+            db: AsyncSession,
+            *,
+            document_id: int,
+            index_version: Optional[int] = None,
+            limit: int = 200,
+            offset: int = 0,
+    ) -> List[StgRagChunksORM]:
         doc = await self.get_document(db, document_id=document_id, include_deleted=False)
 
         ver = index_version

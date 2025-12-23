@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-# @File: text_parser.py
+# @Author: yaccii
+# @Description:
+
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -11,7 +13,7 @@ class TextParser(Parser):
     async def parse(self, *, storage_uri: str, content_type: str) -> Dict[str, Any]:
         path = self._to_local_path(storage_uri)
 
-        # 关键：防止图片/音频/octet-stream 走到 text fallback 后写乱码
+        # 防止图片/音频/octet-stream 走到 text fallback 后乱码
         if self._looks_binary(path):
             raise ParseError("file looks like binary; text parser refused", retryable=False)
 
@@ -23,12 +25,8 @@ class TextParser(Parser):
 
         return {"text": text, "elements": elements, "source_modality": "text"}
 
-    def _to_local_path(self, storage_uri: str) -> str:
-        if storage_uri.startswith("local:"):
-            return storage_uri[len("local:") :]
-        raise ParseError(f"unsupported storage_uri: {storage_uri}", retryable=False)
-
-    def _looks_binary(self, path: str) -> bool:
+    @staticmethod
+    def _looks_binary(path: str) -> bool:
         try:
             with open(path, "rb") as f:
                 b = f.read(4096)
@@ -42,7 +40,8 @@ class TextParser(Parser):
         printable = sum(1 for x in b if 32 <= x <= 126 or x in (9, 10, 13))
         return printable / max(1, len(b)) < 0.70
 
-    def _read_text(self, path: str) -> str:
+    @staticmethod
+    def _read_text(path: str) -> str:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 return f.read()

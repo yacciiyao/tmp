@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # @Author: yaccii
-# @Description: Redis 网关（用于将爬虫任务入队到外部爬虫服务）
+# @Description: Redis 网关（推送爬虫请求）
+
 from __future__ import annotations
 
 import socket

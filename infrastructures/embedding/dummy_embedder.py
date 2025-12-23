@@ -1,12 +1,17 @@
 # -*- coding: utf-8 -*-
+# @Author: yaccii
+# @Description:
+
 from __future__ import annotations
+
 import hashlib
-import numpy as np
 from typing import List
+
+import numpy as np
 
 
 class DummyEmbedder:
-    """可预测的、幂等的离线测试 embedding"""
+    """幂等离线测试 embedding"""
 
     def __init__(self, dim: int = 64):
         self.dim = dim

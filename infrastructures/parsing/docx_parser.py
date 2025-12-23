@@ -1,33 +1,23 @@
 # -*- coding: utf-8 -*-
-# @File: docx_parser.py
+# @Author: yaccii
+# @Description:
+
 from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from docx import Document  # python-docx
+from docx import Document
 
 from infrastructures.parsing.parser_base import Parser, ParseError
 
 
 class DocxParser(Parser):
-    """
-    DOCX parser (text-only).
-    - Extract text from:
-        1) paragraphs
-        2) tables (cell paragraphs)
-        3) headers/footers
-    - DO NOT OCR images.
-    - To guarantee ingestion success for demo:
-        if no extractable text, return a placeholder text instead of raising.
-    """
-
     async def parse(self, *, storage_uri: str, content_type: str) -> Dict[str, Any]:
         path = self._to_local_path(storage_uri)
 
         try:
             doc = Document(path)
         except Exception as e:
-            # 文件无法打开属于硬失败
             raise ParseError(f"docx open failed: {e}", retryable=False) from e
 
         parts: List[str] = []
@@ -74,9 +64,6 @@ class DocxParser(Parser):
 
         text = "\n".join(parts).strip()
 
-        # Guarantee ingestion success:
-        # Some DOCX files are scanned images or otherwise contain no extractable text.
-        # For demo pipeline, return a placeholder so chunking & DB persistence can proceed.
         if not text:
             text = "[NO_EXTRACTABLE_TEXT_IN_DOCX]"
             elements.append(
@@ -92,8 +79,3 @@ class DocxParser(Parser):
             "elements": elements,
             "source_modality": "docx_text_only",
         }
-
-    def _to_local_path(self, storage_uri: str) -> str:
-        if storage_uri.startswith("local:"):
-            return storage_uri[len("local:") :]
-        raise ParseError(f"unsupported storage_uri: {storage_uri}", retryable=False)

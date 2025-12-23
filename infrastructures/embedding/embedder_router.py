@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-from __future__ import annotations
+# @Author: yaccii
+# @Description:
 
-import logging
+from __future__ import annotations
 
 from infrastructures.embedding.dummy_embedder import DummyEmbedder
 from infrastructures.embedding.sbert_embedder import SentenceTransformerEmbedder
-from infrastructures.vconfig import config
-
-log = logging.getLogger(__name__)
+from infrastructures.vconfig import vconfig
+from infrastructures.vlogger import vlogger
 
 _embedder_instance = None
 
@@ -17,17 +17,17 @@ def create_embedder():
     if _embedder_instance is not None:
         return _embedder_instance
 
-    backend = config.embedding_backend.strip().lower()
-    log.info("init embedder backend=%s", backend)
+    backend = vconfig.embedding_backend.strip().lower()
+    vlogger.info("init embedder backend=%s", backend)
 
     if backend == "sentence_transformer":
         _embedder_instance = SentenceTransformerEmbedder(
-            model_name=config.embedding_model_name,
-            dim=config.embedding_dim,
+            model_name=vconfig.embedding_model_name,
+            dim=vconfig.embedding_dim,
         )
-        log.info("embedder=SentenceTransformer model=%s", config.embedding_model_name)
+        vlogger.info("embedder=SentenceTransformer model=%s", vconfig.embedding_model_name)
         return _embedder_instance
 
-    _embedder_instance = DummyEmbedder(dim=config.embedding_dim)
-    log.info("embedder=DummyEmbedder dim=%s", config.embedding_dim)
+    _embedder_instance = DummyEmbedder(dim=vconfig.embedding_dim)
+    vlogger.info("embedder=DummyEmbedder dim=%s", vconfig.embedding_dim)
     return _embedder_instance

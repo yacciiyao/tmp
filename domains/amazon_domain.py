@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 # @Author: yaccii
 # @Description: 亚马逊运营域模型（面向“帮助决策”，可回溯）
+
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Optional, Dict, Any, List
 
 from pydantic import Field
 

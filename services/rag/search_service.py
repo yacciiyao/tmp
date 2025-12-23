@@ -1,16 +1,17 @@
 # -*- coding: utf-8 -*-
 # @Author: yaccii
 # @Description: RAG 检索服务（BM25/向量/混合召回 + 结果融合）
+
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, List, Tuple, Dict
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from domains.error_domain import AppError
 from domains.rag_domain import SearchRequest, SearchResponse, SearchHit
 from infrastructures.db.repository.rag_repository import RagRepository
-from infrastructures.vconfig import config
+from infrastructures.vconfig import vconfig
 
 
 class SearchService:
@@ -22,18 +23,18 @@ class SearchService:
 
     @staticmethod
     def _backend() -> str:
-        backend = (config.index_backend or "").strip().lower() or "hybrid"
+        backend = (vconfig.index_backend or "").strip().lower() or "hybrid"
         if backend not in {"vector", "bm25", "hybrid"}:
             return "hybrid"
         return backend
 
     @staticmethod
     def _es_enabled() -> bool:
-        return bool(config.es_enabled)
+        return bool(vconfig.es_enabled)
 
     @staticmethod
     def _milvus_enabled() -> bool:
-        return bool(config.milvus_enabled)
+        return bool(vconfig.milvus_enabled)
 
     async def search(self, db: AsyncSession, req: SearchRequest) -> SearchResponse:
         query = (req.query or "").strip()
@@ -49,7 +50,6 @@ class SearchService:
         es_ok = self._es_enabled()
         vec_ok = self._milvus_enabled()
 
-        # graceful degradation: keep behaviour simple and predictable
         if backend == "vector" and not vec_ok:
             raise AppError(code="search.vector_disabled", message="Milvus is disabled", http_status=503)
         if backend == "bm25" and not es_ok:
@@ -60,7 +60,8 @@ class SearchService:
             elif es_ok and not vec_ok:
                 backend = "bm25"
             elif not es_ok and not vec_ok:
-                raise AppError(code="search.no_index", message="Both Milvus and Elasticsearch are disabled", http_status=503)
+                raise AppError(code="search.no_index", message="Both Milvus and Elasticsearch are disabled",
+                               http_status=503)
 
         vec_pairs: List[Tuple[str, float]] = []
         es_pairs: List[Tuple[str, float]] = []
@@ -89,7 +90,7 @@ class SearchService:
         hits: List[SearchHit] = []
         seen_doc: Dict[int, int] = {}
 
-        max_per_doc = int(config.search_max_per_doc)
+        max_per_doc = int(vconfig.search_max_per_doc)
 
         for cid, score in fused:
             c = by_id.get(str(cid))
@@ -117,9 +118,9 @@ class SearchService:
 
     @staticmethod
     def _merge(
-        vec_pairs: List[Tuple[str, float]],
-        es_pairs: List[Tuple[str, float]],
-        backend: str,
+            vec_pairs: List[Tuple[str, float]],
+            es_pairs: List[Tuple[str, float]],
+            backend: str,
     ) -> List[Tuple[str, float]]:
         # Keep behaviour stable:
         # - vector: sort by score desc, tie-break by chunk_id

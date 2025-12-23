@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
-# @File: pdf_parser.py
+# @Author: yaccii
+# @Description:
+
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Dict, Any, List
+
+from pypdf import PdfReader
 
 from infrastructures.parsing.parser_base import Parser, ParseError
-from pypdf import PdfReader
 
 
 class PdfParser(Parser):
@@ -31,8 +34,3 @@ class PdfParser(Parser):
             raise ParseError("pdf has no extractable text", retryable=False)
 
         return {"text": text, "elements": elements, "source_modality": "pdf"}
-
-    def _to_local_path(self, storage_uri: str) -> str:
-        if storage_uri.startswith("local:"):
-            return storage_uri[len("local:") :]
-        raise ParseError(f"unsupported storage_uri: {storage_uri}", retryable=False)

@@ -1,30 +1,30 @@
 # -*- coding: utf-8 -*-
+# @Author: yaccii
+# @Description:
 
 from __future__ import annotations
 
-from typing import List, Optional, Dict, Any
+from typing import Optional, List, Dict, Any
 
-from fastapi import APIRouter, Depends, File, UploadFile, Query
+from fastapi import APIRouter, Depends, Query, UploadFile, File
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import get_current_admin
 from domains.error_domain import AppError
-from domains.rag_domain import SearchRequest, SearchResponse
-from infrastructures.vconfig import config
+from domains.rag_domain import SearchResponse, SearchRequest
 from infrastructures.db.orm.orm_deps import get_db
 from infrastructures.db.repository.rag_repository import RagRepository
-from infrastructures.storage.local_storage import LocalStorage
+from infrastructures.embedding.embedder_router import create_embedder
+from infrastructures.index.index_router import create_milvus_index, create_es_index
+from infrastructures.storage.storage_router import get_storage
 from services.rag.rag_service import RagService
 from services.rag.search_service import SearchService
-from infrastructures.embedding.embedder_router import create_embedder
-from infrastructures.index.index_router import create_es_index, create_milvus_index
-
 
 router = APIRouter(prefix="/rag", tags=["rag"])
 
 _repo = RagRepository()
-_storage = LocalStorage(base_dir=config.storage_dir)
+_storage = get_storage()
 _service = RagService(repo=_repo, storage=_storage)
 
 _search_service: Optional[SearchService] = None
@@ -69,9 +69,9 @@ class SpaceUpdateRequest(BaseModel):
 
 @router.post("/spaces", response_model=SpaceResponse)
 async def create_space(
-    body: SpaceCreateRequest,
-    db: AsyncSession = Depends(get_db),
-    _admin=Depends(get_current_admin),
+        body: SpaceCreateRequest,
+        db: AsyncSession = Depends(get_db),
+        _admin=Depends(get_current_admin),
 ) -> SpaceResponse:
     existing = await _repo.get_space(db, kb_space=body.kb_space)
     if existing is not None:
@@ -90,12 +90,12 @@ async def create_space(
 
 @router.get("/spaces", response_model=List[SpaceResponse])
 async def list_spaces(
-    enabled: Optional[int] = Query(default=None, ge=0, le=1),
-    status: Optional[int] = Query(default=None),
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-    db: AsyncSession = Depends(get_db),
-    _admin=Depends(get_current_admin),
+        enabled: Optional[int] = Query(default=None, ge=0, le=1),
+        status: Optional[int] = Query(default=None),
+        limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
+        db: AsyncSession = Depends(get_db),
+        _admin=Depends(get_current_admin),
 ) -> List[SpaceResponse]:
     spaces = await _repo.list_spaces(db, enabled=enabled, status=status, limit=limit, offset=offset)
     return [SpaceResponse.model_validate(x) for x in spaces]
@@ -103,10 +103,10 @@ async def list_spaces(
 
 @router.patch("/spaces/{kb_space}")
 async def update_space(
-    kb_space: str,
-    body: SpaceUpdateRequest,
-    db: AsyncSession = Depends(get_db),
-    _admin=Depends(get_current_admin),
+        kb_space: str,
+        body: SpaceUpdateRequest,
+        db: AsyncSession = Depends(get_db),
+        _admin=Depends(get_current_admin),
 ) -> Dict[str, Any]:
     rows = await _repo.update_space(
         db,
@@ -121,9 +121,9 @@ async def update_space(
 
 @router.delete("/spaces/{kb_space}")
 async def delete_space(
-    kb_space: str,
-    db: AsyncSession = Depends(get_db),
-    _admin=Depends(get_current_admin),
+        kb_space: str,
+        db: AsyncSession = Depends(get_db),
+        _admin=Depends(get_current_admin),
 ) -> Dict[str, Any]:
     space_rows, doc_rows = await _repo.delete_space_cascade(db, kb_space=kb_space)
     return {"space_updated": space_rows, "documents_deleted": doc_rows}
@@ -155,10 +155,10 @@ class UploadResponse(BaseModel):
 
 @router.post("/documents/upload", response_model=UploadResponse)
 async def upload_document(
-    file: UploadFile = File(...),
-    kb_space: str = Query(default="default"),
-    db: AsyncSession = Depends(get_db),
-    admin=Depends(get_current_admin),
+        file: UploadFile = File(...),
+        kb_space: str = Query(default="default"),
+        db: AsyncSession = Depends(get_db),
+        admin=Depends(get_current_admin),
 ) -> UploadResponse:
     doc, job = await _service.upload_and_create_job(
         db,
@@ -171,9 +171,9 @@ async def upload_document(
 
 @router.get("/documents/{document_id}", response_model=DocumentResponse)
 async def get_document(
-    document_id: int,
-    db: AsyncSession = Depends(get_db),
-    _admin=Depends(get_current_admin),
+        document_id: int,
+        db: AsyncSession = Depends(get_db),
+        _admin=Depends(get_current_admin),
 ) -> DocumentResponse:
     doc = await _repo.get_document(db, document_id=document_id, include_deleted=False)
     if doc is None:
@@ -183,11 +183,11 @@ async def get_document(
 
 @router.get("/documents", response_model=List[DocumentResponse])
 async def list_documents(
-    kb_space: Optional[str] = Query(default=None),
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-    db: AsyncSession = Depends(get_db),
-    _admin=Depends(get_current_admin),
+        kb_space: Optional[str] = Query(default=None),
+        limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
+        db: AsyncSession = Depends(get_db),
+        _admin=Depends(get_current_admin),
 ) -> List[DocumentResponse]:
     docs = await _repo.list_documents(db, kb_space=kb_space, limit=limit, offset=offset, statuses=None)
     return [DocumentResponse.model_validate(x) for x in docs]
@@ -195,9 +195,9 @@ async def list_documents(
 
 @router.delete("/documents/{document_id}")
 async def delete_document(
-    document_id: int,
-    db: AsyncSession = Depends(get_db),
-    _admin=Depends(get_current_admin),
+        document_id: int,
+        db: AsyncSession = Depends(get_db),
+        _admin=Depends(get_current_admin),
 ) -> Dict[str, Any]:
     await _service.delete_document(db, document_id=document_id)
     return {"deleted": 1}
@@ -224,9 +224,9 @@ class JobResponse(BaseModel):
 
 @router.get("/jobs/{job_id}", response_model=JobResponse)
 async def get_job(
-    job_id: int,
-    db: AsyncSession = Depends(get_db),
-    _admin=Depends(get_current_admin),
+        job_id: int,
+        db: AsyncSession = Depends(get_db),
+        _admin=Depends(get_current_admin),
 ) -> JobResponse:
     job = await _repo.get_job(db, job_id=job_id)
     if job is None:
@@ -236,13 +236,13 @@ async def get_job(
 
 @router.get("/jobs", response_model=List[JobResponse])
 async def list_jobs(
-    kb_space: Optional[str] = Query(default=None),
-    document_id: Optional[int] = Query(default=None),
-    status: Optional[int] = Query(default=None),
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
-    db: AsyncSession = Depends(get_db),
-    _admin=Depends(get_current_admin),
+        kb_space: Optional[str] = Query(default=None),
+        document_id: Optional[int] = Query(default=None),
+        status: Optional[int] = Query(default=None),
+        limit: int = Query(default=50, ge=1, le=200),
+        offset: int = Query(default=0, ge=0),
+        db: AsyncSession = Depends(get_db),
+        _admin=Depends(get_current_admin),
 ) -> List[JobResponse]:
     statuses = [int(status)] if status is not None else None
     jobs = await _repo.list_jobs(
@@ -273,12 +273,12 @@ class ChunkResponse(BaseModel):
 
 @router.get("/chunks", response_model=List[ChunkResponse])
 async def list_chunks(
-    document_id: int = Query(...),
-    index_version: Optional[int] = Query(default=None),
-    limit: int = Query(default=200, ge=1, le=500),
-    offset: int = Query(default=0, ge=0),
-    db: AsyncSession = Depends(get_db),
-    _admin=Depends(get_current_admin),
+        document_id: int = Query(...),
+        index_version: Optional[int] = Query(default=None),
+        limit: int = Query(default=200, ge=1, le=500),
+        offset: int = Query(default=0, ge=0),
+        db: AsyncSession = Depends(get_db),
+        _admin=Depends(get_current_admin),
 ) -> List[ChunkResponse]:
     doc = await _repo.get_document(db, document_id=document_id, include_deleted=False)
     if doc is None:
@@ -296,8 +296,8 @@ async def list_chunks(
 
 @router.post("/search", response_model=SearchResponse)
 async def search(
-    body: SearchRequest,
-    db: AsyncSession = Depends(get_db),
-    _admin=Depends(get_current_admin),
+        body: SearchRequest,
+        db: AsyncSession = Depends(get_db),
+        _admin=Depends(get_current_admin),
 ) -> SearchResponse:
     return await _get_search_service().search(db, req=body)

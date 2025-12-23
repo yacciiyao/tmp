@@ -5,18 +5,16 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict
+from typing import Dict, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from domains.analysis_job_domain import AnalysisJobType
 from infrastructures.db.orm.orm_base import AsyncSessionFactory
-from infrastructures.vlogger import get_logger
+from infrastructures.vlogger import vlogger
 from services.agents.amazon.amazon_report_generator import AmazonReportGenerator
 from services.jobs.analysis_job_service import AnalysisJobService
 from services.spider.spider_task_service import SpiderTaskService
-
-logger = get_logger(__name__)
 
 
 class AnalysisWorker:
@@ -44,7 +42,7 @@ class AnalysisWorker:
                         db, job_id=job.job_id, error_code="ANALYSIS_FAILED", error_message=str(e)
                     )
                     await db.commit()
-                    logger.exception("analysis job failed: job_id=%s", job.job_id)
+                    vlogger.exception("analysis job failed: job_id=%s", job.job_id)
 
     async def _process_one(self, db: AsyncSession, *, job_id: int) -> None:
         job = await self.job_svc.get_job(db, job_id=job_id)
@@ -98,4 +96,4 @@ class AnalysisWorker:
             top_n=int(payload.get("top_n") or 10),
         )
         await self.job_svc.mark_done(db, job_id=job.job_id, result=report)
-        logger.info("analysis job done: job_id=%s crawl_batch_no=%s", job.job_id, crawl_batch_no)
+        vlogger.info("analysis job done: job_id=%s crawl_batch_no=%s", job.job_id, crawl_batch_no)

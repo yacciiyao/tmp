@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+# @Author: yaccii
+# @Description:
+
 from __future__ import annotations
 
 import hashlib
@@ -7,11 +10,9 @@ import re
 import time
 from typing import Optional
 
-from fastapi import UploadFile
-
 from domains.error_domain import AppError
-from infrastructures.storage.storage_base import Storage, StoredFile
-from infrastructures.vconfig import config
+from infrastructures.storage.storage_base import Storage, StoredFile, UploadFileLike
+from infrastructures.vconfig import vconfig
 
 _filename_re = re.compile(r"[^0-9A-Za-z._-]+")
 
@@ -34,14 +35,18 @@ class LocalStorage(Storage):
         os.makedirs(self.base_dir, exist_ok=True)
 
     async def save_upload(
-        self,
-        *,
-        kb_space: str,
-        uploader_user_id: int,
-        upload_file: UploadFile,
+            self,
+            *,
+            kb_space: str,
+            uploader_user_id: int,
+            upload_file: UploadFileLike,
     ) -> StoredFile:
-        filename = upload_file.filename or "file"
-        content_type = upload_file.content_type or "application/octet-stream"
+        # 业务逻辑：只做最小属性检查，避免 UploadFile 的导入路径差异导致误判。
+        if not hasattr(upload_file, "read") or not hasattr(upload_file, "close"):
+            raise AppError(code="INVALID_UPLOAD", message="upload_file missing read/close")
+
+        filename = getattr(upload_file, "filename", None) or "file"
+        content_type = getattr(upload_file, "content_type", None) or "application/octet-stream"
 
         safe_name = _safe_filename(filename)
         day = time.strftime("%Y%m%d", time.localtime())
@@ -53,7 +58,7 @@ class LocalStorage(Storage):
 
         abs_path = os.path.join(abs_dir, f"{ts_ms}_{safe_name}")
 
-        max_bytes = int(config.max_upload_mb) * 1024 * 1024
+        max_bytes = int(vconfig.max_upload_mb) * 1024 * 1024
 
         h = hashlib.sha256()
         size = 0
@@ -71,9 +76,9 @@ class LocalStorage(Storage):
                     os.remove(abs_path)
                     raise AppError(
                         code="upload.too_large",
-                        message=f"File exceeds max_upload_mb={int(config.max_upload_mb)}MB",
+                        message=f"File exceeds max_upload_mb={int(vconfig.max_upload_mb)}MB",
                         http_status=413,
-                        details={"max_upload_mb": int(config.max_upload_mb)},
+                        details={"max_upload_mb": int(vconfig.max_upload_mb)},
                     )
 
         await upload_file.close()
@@ -90,5 +95,5 @@ class LocalStorage(Storage):
 
     async def resolve_local_path(self, *, storage_uri: str) -> Optional[str]:
         if storage_uri.startswith("local:"):
-            return storage_uri[len("local:") :]
+            return storage_uri[len("local:"):]
         return None

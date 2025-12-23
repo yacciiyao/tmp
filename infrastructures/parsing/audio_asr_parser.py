@@ -1,31 +1,30 @@
 # -*- coding: utf-8 -*-
-# @File: audio_asr_parser.py
 # @Author: yaccii
-# @Time: 2025-12-15 16:51
 # @Description:
+
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Optional, Dict, Any, List
+
+from infrastructures.vconfig import vconfig
+
+if vconfig.enable_audio_asr:
+    from faster_whisper import WhisperModel
+else:
+    WhisperModel = None
 
 from infrastructures.parsing.parser_base import Parser, ParseError
-from infrastructures.vconfig import config
-
-# Optional dependency: only required when audio ASR is enabled.
-if config.enable_audio_asr:
-    from faster_whisper import WhisperModel  # type: ignore
-else:  # pragma: no cover
-    WhisperModel = None  # type: ignore
 
 
 class FasterWhisperParser(Parser):
     def __init__(
-        self,
-        *,
-        model_size: str = "base",
-        device: str = "cpu",
-        compute_type: str = "int8",
-        language: Optional[str] = None,
+            self,
+            *,
+            model_size: str = "base",
+            device: str = "cpu",
+            compute_type: str = "int8",
+            language: Optional[str] = None,
     ) -> None:
         self.model_size = model_size
         self.device = device
@@ -39,11 +38,6 @@ class FasterWhisperParser(Parser):
         if not text.strip():
             raise ParseError("asr returned empty text", retryable=False)
         return {"text": text, "elements": elements, "source_modality": "audio"}
-
-    def _to_local_path(self, storage_uri: str) -> str:
-        if storage_uri.startswith("local:"):
-            return storage_uri[len("local:") :]
-        raise ParseError(f"unsupported storage_uri: {storage_uri}", retryable=False)
 
     def _get_model(self):
         if self._model is not None:

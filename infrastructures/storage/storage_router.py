@@ -1,16 +1,12 @@
 # -*- coding: utf-8 -*-
-# @File: storage_router.py
 # @Author: yaccii
-# @Time: 2025-12-19 14:05
+# @Description:
 from __future__ import annotations
 
 from infrastructures.storage.local_storage import LocalStorage
-from infrastructures.storage.s3_storage import S3Storage
-from infrastructures.vconfig import config
+from infrastructures.vconfig import vconfig
 
 
 def get_storage():
-    backend = str(getattr(config, "storage_backend", "local") or "local").strip().lower()
-    if backend == "s3":
-        return S3Storage(base_dir=config.storage_dir)
-    return LocalStorage(base_dir=config.storage_dir)
+    # 业务逻辑：项目当前仅支持本地存储，避免无配置的 S3 代码增加维护成本。
+    return LocalStorage(base_dir=vconfig.storage_dir)

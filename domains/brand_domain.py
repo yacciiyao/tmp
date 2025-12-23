@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 # @Author: yaccii
 # @Description: 出海品牌研究域模型（基于爬虫结构化数据 + RAG公开信息）
+
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Optional, List, Dict, Any
 
 from pydantic import Field
 

@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
-# @File: s3_storage.py
 # @Author: yaccii
-# @Time: 2025-12-19 14:05
 # @Description:
-# -*- coding: utf-8 -*-
+
 from __future__ import annotations
 
 import asyncio
@@ -14,11 +12,11 @@ import time
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-from fastapi import UploadFile
+from starlette.datastructures import UploadFile
 
 from domains.error_domain import AppError
 from infrastructures.storage.storage_base import Storage, StoredFile
-from infrastructures.vconfig import config
+from infrastructures.vconfig import vconfig
 
 _filename_re = re.compile(r"[^0-9A-Za-z._-]+")
 
@@ -46,14 +44,14 @@ def _join_key(prefix: str, *parts: str) -> str:
 def _parse_s3_uri(uri: str) -> Tuple[str, str]:
     # supports: s3://bucket/key
     if uri.startswith("s3://"):
-        rest = uri[len("s3://") :]
+        rest = uri[len("s3://"):]
         bucket, _, key = rest.partition("/")
         if not bucket or not key:
             raise ValueError("invalid s3 uri")
         return bucket, key
     # supports: s3:bucket:key
     if uri.startswith("s3:"):
-        rest = uri[len("s3:") :]
+        rest = uri[len("s3:"):]
         bucket, _, key = rest.partition(":")
         if not bucket or not key:
             raise ValueError("invalid s3 uri")
@@ -74,25 +72,19 @@ class _S3Config:
 
 
 class S3Storage(Storage):
-    """S3-backed storage.
-
-    - save_upload uploads file to S3 and returns storage_uri as s3://bucket/key
-    - resolve_local_path downloads object to local cache for parsers that need a path
-    """
-
     def __init__(self, *, base_dir: str) -> None:
         self.base_dir = str(base_dir)
         os.makedirs(self.base_dir, exist_ok=True)
 
         c = _S3Config(
-            bucket=str(config.s3_bucket or "").strip(),
-            region=str(config.s3_region or "").strip(),
-            endpoint_url=str(config.s3_endpoint_url or "").strip(),
-            access_key_id=str(config.s3_access_key_id or "").strip(),
-            secret_access_key=str(config.s3_secret_access_key or "").strip(),
-            session_token=str(config.s3_session_token or "").strip(),
-            prefix=str(config.s3_prefix or "").strip(),
-            public_base_url=str(config.s3_public_base_url or "").strip(),
+            bucket=str(vconfig.s3_bucket or "").strip(),
+            region=str(vconfig.s3_region or "").strip(),
+            endpoint_url=str(vconfig.s3_endpoint_url or "").strip(),
+            access_key_id=str(vconfig.s3_access_key_id or "").strip(),
+            secret_access_key=str(vconfig.s3_secret_access_key or "").strip(),
+            session_token=str(vconfig.s3_session_token or "").strip(),
+            prefix=str(vconfig.s3_prefix or "").strip(),
+            public_base_url=str(vconfig.s3_public_base_url or "").strip(),
         )
         if not c.bucket:
             raise RuntimeError("S3_BUCKET is required when STORAGE_BACKEND=s3")
@@ -198,7 +190,7 @@ class S3Storage(Storage):
     async def resolve_local_path(self, *, storage_uri: str) -> Optional[str]:
         s = (storage_uri or "").strip()
         if s.startswith("local:"):
-            return s[len("local:") :]
+            return s[len("local:"):]
 
         if not (s.startswith("s3://") or s.startswith("s3:")):
             return None

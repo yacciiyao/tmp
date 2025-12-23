@@ -6,19 +6,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import BigInteger, ForeignKey, Index, Integer, JSON, String, Text
+from sqlalchemy import Integer, JSON, ForeignKey, String, Index, Text
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import Mapped, mapped_column
 
-from infrastructures.db.orm.orm_base import Base, TimestampMixin
+from infrastructures.db.orm.orm_base import TimestampMixin, Base
 
 
-class AnalysisJobORM(TimestampMixin, Base):
+class OpsAnalysisJobsORM(TimestampMixin, Base):
     __tablename__ = "ops_analysis_jobs"
 
     job_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="任务ID(自增)")
     job_type: Mapped[int] = mapped_column(Integer, nullable=False, comment="任务类型（AnalysisJobType）")
-    status: Mapped[int] = mapped_column(Integer, nullable=False, default=10, comment="状态：10待执行/20执行中/30成功/40失败")
+    status: Mapped[int] = mapped_column(Integer, nullable=False, default=10,
+                                        comment="状态：10待执行/20执行中/30成功/40失败")
 
     payload: Mapped[dict[str, Any]] = mapped_column(
         MutableDict.as_mutable(JSON),
@@ -56,6 +57,6 @@ class AnalysisJobORM(TimestampMixin, Base):
     )
 
 
-Index("ix_aj_type_st", AnalysisJobORM.job_type, AnalysisJobORM.status)
-Index("ix_aj_spid", AnalysisJobORM.spider_task_id)
-Index("ix_aj_cby", AnalysisJobORM.created_by)
+Index("ix_aj_type_st", OpsAnalysisJobsORM.job_type, OpsAnalysisJobsORM.status)
+Index("ix_aj_spid", OpsAnalysisJobsORM.spider_task_id)
+Index("ix_aj_cby", OpsAnalysisJobsORM.created_by)

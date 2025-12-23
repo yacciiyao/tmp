@@ -4,13 +4,55 @@
 
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, DateTime, Float, Index, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Integer, String, Numeric, UniqueConstraint, Index, BigInteger, Text, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 
 from infrastructures.db.orm.orm_base import Base
 
 
-class KickstarterProjectORM(Base):
+class SrcProjectsORM(Base):
+    __tablename__ = "src_cf_projects"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="项目id")
+    source: Mapped[str | None] = mapped_column(String(32), nullable=True, comment="数据来源")
+    project_id: Mapped[str | None] = mapped_column(String(32), nullable=True, comment="第三方项目id")
+    project_url: Mapped[str | None] = mapped_column(String(500), nullable=True, comment="项目地址")
+    image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    project_type: Mapped[str | None] = mapped_column(String(32), nullable=True, comment="项目类型")
+    category: Mapped[str | None] = mapped_column(String(120), nullable=True, comment="一级分类")
+    category2: Mapped[str | None] = mapped_column(String(120), nullable=True, comment="二级分类")
+    title: Mapped[str | None] = mapped_column(String(300), nullable=True, comment="标题")
+    title_desc: Mapped[str | None] = mapped_column(String(500), nullable=True, comment="标题描述")
+
+    owner_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    owner_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    country: Mapped[str | None] = mapped_column(String(120), nullable=True, comment="项目所在国家")
+    city: Mapped[str | None] = mapped_column(String(120), nullable=True, comment="项目所在城市")
+    currency: Mapped[str | None] = mapped_column(String(32), nullable=True, comment="货币种类")
+    to_usd_rate: Mapped[float] = mapped_column(Numeric(8, 6), nullable=False, comment="转换美元汇率")
+
+    funds_raised_amount: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True, comment="实际筹集金额")
+    funds_plan_amount: Mapped[float] = mapped_column(Numeric(20, 2), nullable=False, default=0.0,
+                                                     comment="计划资金筹集金额")
+    funds_raised_percent: Mapped[float | None] = mapped_column(Numeric(15, 6), nullable=True, comment="筹集百分比")
+    comment_num: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="评论次数")
+    updates_num: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="项目更新次数")
+    backers_num: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="支持人数")
+    product_stage: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    open_date: Mapped[int] = mapped_column(Integer, nullable=False, comment="项目开始时间")
+    close_date: Mapped[int] = mapped_column(Integer, nullable=False, comment="项目关闭时间")
+    update_date: Mapped[int] = mapped_column(Integer, nullable=False, comment="更新时间")
+    create_date: Mapped[int] = mapped_column(Integer, nullable=False, comment="创建时间")
+
+    __table_args__ = (
+        UniqueConstraint("source", "project_id", name="uq_cf_sp"),
+        Index("ix_cf_src", "source"),
+        Index("ix_cf_pid", "project_id"),
+    )
+
+
+class SrcKickstarterProjectsORM(Base):
     __tablename__ = "src_cf_kickstarter_projects"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True, comment="自增ID")
@@ -32,7 +74,8 @@ class KickstarterProjectORM(Base):
     usd_pledged: Mapped[float | None] = mapped_column(Numeric(20, 8), nullable=True, comment="美元筹资金额")
     fx_rate: Mapped[float | None] = mapped_column(Numeric(12, 8), nullable=True, comment="汇率")
     usd_exchange_rate: Mapped[float | None] = mapped_column(Numeric(12, 8), nullable=True, comment="美元汇率")
-    converted_pledged_amount: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True, comment="转换后筹资金额(美元)")
+    converted_pledged_amount: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True,
+                                                                   comment="转换后筹资金额(美元)")
     current_currency: Mapped[str | None] = mapped_column(String(8), nullable=True, comment="当前币种")
     usd_type: Mapped[str | None] = mapped_column(String(50), nullable=True, comment="USD类型")
     percent_funded: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True, comment="百分比筹资")
@@ -80,48 +123,7 @@ class KickstarterProjectORM(Base):
     )
 
 
-class YsProjectORM(Base):
-    __tablename__ = "src_cf_projects"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="项目id")
-    source: Mapped[str | None] = mapped_column(String(32), nullable=True, comment="数据来源")
-    project_id: Mapped[str | None] = mapped_column(String(32), nullable=True, comment="第三方项目id")
-    project_url: Mapped[str | None] = mapped_column(String(500), nullable=True, comment="项目地址")
-    image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    project_type: Mapped[str | None] = mapped_column(String(32), nullable=True, comment="项目类型")
-    category: Mapped[str | None] = mapped_column(String(120), nullable=True, comment="一级分类")
-    category2: Mapped[str | None] = mapped_column(String(120), nullable=True, comment="二级分类")
-    title: Mapped[str | None] = mapped_column(String(300), nullable=True, comment="标题")
-    title_desc: Mapped[str | None] = mapped_column(String(500), nullable=True, comment="标题描述")
-
-    owner_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    owner_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    country: Mapped[str | None] = mapped_column(String(120), nullable=True, comment="项目所在国家")
-    city: Mapped[str | None] = mapped_column(String(120), nullable=True, comment="项目所在城市")
-    currency: Mapped[str | None] = mapped_column(String(32), nullable=True, comment="货币种类")
-    to_usd_rate: Mapped[float] = mapped_column(Numeric(8, 6), nullable=False, comment="转换美元汇率")
-
-    funds_raised_amount: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True, comment="实际筹集金额")
-    funds_plan_amount: Mapped[float] = mapped_column(Numeric(20, 2), nullable=False, default=0.0, comment="计划资金筹集金额")
-    funds_raised_percent: Mapped[float | None] = mapped_column(Numeric(15, 6), nullable=True, comment="筹集百分比")
-    comment_num: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="评论次数")
-    updates_num: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="项目更新次数")
-    backers_num: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="支持人数")
-    product_stage: Mapped[str | None] = mapped_column(String(16), nullable=True)
-
-    open_date: Mapped[int] = mapped_column(Integer, nullable=False, comment="项目开始时间")
-    close_date: Mapped[int] = mapped_column(Integer, nullable=False, comment="项目关闭时间")
-    update_date: Mapped[int] = mapped_column(Integer, nullable=False, comment="更新时间")
-    create_date: Mapped[int] = mapped_column(Integer, nullable=False, comment="创建时间")
-
-    __table_args__ = (
-        UniqueConstraint("source", "project_id", name="uq_cf_sp"),
-        Index("ix_cf_src", "source"),
-        Index("ix_cf_pid", "project_id"),
-    )
-
-
-class MakuakeProjectORM(Base):
+class SrcMakuakeProjectsORM(Base):
     __tablename__ = "src_cf_makuake_projects"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

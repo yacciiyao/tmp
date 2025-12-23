@@ -1,19 +1,21 @@
 # -*- coding: utf-8 -*-
+# @Author: yaccii
+# @Description:
+
 from __future__ import annotations
 
 import threading
-from typing import Any, Callable, Dict, Optional, cast
+from typing import Callable, Any, Dict, Optional, cast
 
 from infrastructures.parsing.docx_parser import DocxParser
-from infrastructures.parsing.parser_router import Parser, ParserRouter
+from infrastructures.parsing.parser_base import Parser
+from infrastructures.parsing.parser_router import ParserRouter
 from infrastructures.parsing.pdf_parser import PdfParser
 from infrastructures.parsing.text_parser import TextParser
-from infrastructures.vconfig import config
+from infrastructures.vconfig import vconfig
 
 
 class _LazyInit:
-    """Lazy initialization for heavyweight parsers (OCR/ASR)."""
-
     def __init__(self, factory: Callable[[], Any]) -> None:
         self._factory = factory
         self._impl: Any = None
@@ -35,24 +37,24 @@ class _LazyInit:
 def _make_image_parser() -> Any:
     from infrastructures.parsing.image_ocr_parser import PaddleOcrParser
 
-    return PaddleOcrParser(lang=config.ocr_lang)
+    return PaddleOcrParser(lang=vconfig.ocr_lang)
 
 
 def _make_audio_parser() -> Any:
     from infrastructures.parsing.audio_asr_parser import FasterWhisperParser
 
     return FasterWhisperParser(
-        model_size=config.whisper_model_size,
-        device=config.whisper_device,
-        compute_type=config.whisper_compute_type,
-        language=config.whisper_language,
+        model_size=vconfig.whisper_model_size,
+        device=vconfig.whisper_device,
+        compute_type=vconfig.whisper_compute_type,
+        language=vconfig.whisper_language,
     )
 
 
 class LocalParser:
     def __init__(self) -> None:
-        enable_image_ocr = bool(config.enable_image_ocr)
-        enable_audio_asr = bool(config.enable_audio_asr)
+        enable_image_ocr = bool(vconfig.enable_image_ocr)
+        enable_audio_asr = bool(vconfig.enable_audio_asr)
 
         image_parser: Optional[Parser] = None
         audio_parser: Optional[Parser] = None

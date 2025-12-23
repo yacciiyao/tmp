@@ -1,24 +1,19 @@
 # -*- coding: utf-8 -*-
-# @File: es_index.py
+# @Author: yaccii
+# @Description:
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Dict, Any, Optional, Sequence, List
 
 from elasticsearch import AsyncElasticsearch
 from elasticsearch.helpers import async_bulk
 
-from infrastructures.vconfig import config
+from infrastructures.vconfig import vconfig
 
 
-
-def _compat_headers() -> Dict[str, str]:
-    """Force REST API compatibility with Elasticsearch 8.x server.
-
-    This project may run with a newer python client (e.g. 9.x) against an ES 8.x cluster.
-    ES 8 rejects 'compatible-with=9', so we pin the compatibility header to 8.
-    """
+def _combat_headers() -> Dict[str, str]:
     return {
         "Accept": "application/vnd.elasticsearch+json; compatible-with=8",
         "Content-Type": "application/vnd.elasticsearch+json; compatible-with=8",
@@ -36,12 +31,8 @@ class ESSearchHit:
 
 
 class ESIndex:
-    """
-    Elasticsearch indexer/searcher for chunks.
-    """
-
     def __init__(self) -> None:
-        if not config.es_enabled:
+        if not vconfig.es_enabled:
             self._enabled = False
         else:
             self._enabled = True
@@ -53,26 +44,26 @@ class ESIndex:
             raise RuntimeError("Elasticsearch is disabled (ES_ENABLED=false)")
 
     def _index_name(self, kb_space: str) -> str:
-        prefix = config.es_index_prefix
+        prefix = vconfig.es_index_prefix
         kb_space = (kb_space or "default").strip() or "default"
         return f"{prefix}{kb_space}"
 
     def _get_client(self) -> AsyncElasticsearch:
         self._require_enabled()
         if self._client is None:
-            es_url = str(config.es_url or "").strip()
+            es_url = str(vconfig.es_url or "").strip()
             if not es_url:
                 raise RuntimeError("ES_URL is required when ES_ENABLED=true")
 
             # 认证：优先 basic_auth，其次 api_key（如果你要启用）
-            username = str(config.es_username or "")
-            password = str(config.es_password or "")
-            api_key = str(config.es_api_key or "")
+            username = str(vconfig.es_username or "")
+            password = str(vconfig.es_password or "")
+            api_key = str(vconfig.es_api_key or "")
 
             kwargs: Dict[str, Any] = {
                 "hosts": [es_url],
-                "request_timeout": float(config.es_timeout_seconds),
-                "headers": _compat_headers(),
+                "request_timeout": float(vconfig.es_timeout_seconds),
+                "headers": _combat_headers(),
             }
 
             # python client 8.x：basic_auth / api_key
@@ -114,8 +105,8 @@ class ESIndex:
         }
 
         settings = {
-            "number_of_shards": int(config.es_number_of_shards),
-            "number_of_replicas": int(config.es_number_of_replicas),
+            "number_of_shards": int(vconfig.es_number_of_shards),
+            "number_of_replicas": int(vconfig.es_number_of_replicas),
         }
 
         await client.indices.create(index=index, mappings=mappings, settings=settings)
@@ -182,12 +173,12 @@ class ESIndex:
         return int(resp.get("deleted") or 0)
 
     async def search(
-        self,
-        kb_space: str,
-        query: str,
-        *,
-        top_k: int = 10,
-        document_ids: Optional[Sequence[int]] = None,
+            self,
+            kb_space: str,
+            query: str,
+            *,
+            top_k: int = 10,
+            document_ids: Optional[Sequence[int]] = None,
     ) -> List[ESSearchHit]:
         """
         基于 content 字段做全文检索（BM25）。

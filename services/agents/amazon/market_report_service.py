@@ -13,8 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from domains.amazon_domain import AmazonMarketReportReq
 from domains.analysis_job_domain import AnalysisJobType
 from domains.error_domain import ValidationAppError
-from infrastructures.db.orm.analysis_job_orm import AnalysisJobORM
-from infrastructures.db.orm.spider_orm import SpiderTaskORM
+from infrastructures.db.orm.analysis_job_orm import OpsAnalysisJobsORM
+from infrastructures.db.orm.spider_orm import OpsSpiderTasksORM
 from services.jobs.analysis_job_service import AnalysisJobService
 from services.spider.spider_task_service import SpiderTaskService
 
@@ -25,12 +25,12 @@ class AmazonMarketReportService:
         self._analysis_job_svc = AnalysisJobService()
 
     async def submit_market_report(
-        self,
-        db: AsyncSession,
-        req: AmazonMarketReportReq,
-        *,
-        created_by: int,
-    ) -> Tuple[AnalysisJobORM, SpiderTaskORM]:
+            self,
+            db: AsyncSession,
+            req: AmazonMarketReportReq,
+            *,
+            created_by: int,
+    ) -> Tuple[OpsAnalysisJobsORM, OpsSpiderTasksORM]:
         """创建爬虫任务并生成分析任务（不等待爬虫结果）。"""
         if not (req.keyword or req.asin or req.category):
             raise ValidationAppError(

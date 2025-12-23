@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
-# @File: parser_base.py
 # @Author: yaccii
-# @Time: 2025-12-15 16:48
 # @Description:
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -23,3 +22,9 @@ class Parser(ABC):
     @abstractmethod
     async def parse(self, *, storage_uri: str, content_type: str) -> Dict[str, Any]:
         raise NotImplementedError
+
+    @staticmethod
+    def _to_local_path(storage_uri: str) -> str:
+        if storage_uri.startswith("local:"):
+            return storage_uri[len("local:"):]
+        raise ParseError(f"unsupported storage_uri: {storage_uri}", retryable=False)

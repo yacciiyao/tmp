@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from enum import IntEnum
-from typing import Any, Dict, Optional
+from typing import Dict, Any, Optional
 
 from pydantic import Field
 

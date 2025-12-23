@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # @Author: yaccii
-# @Description: 爬虫任务域模型（本项目只负责触发/等待就绪/读取MySQL）
+# @Description: 爬虫任务域模型（只负责触发/等待就绪/读取MySQL）
+
 from __future__ import annotations
 
 from enum import IntEnum

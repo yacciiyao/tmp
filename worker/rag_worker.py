@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-# @File: rag_worker.py
+# @Author: yaccii
+# @Description:
 
 from __future__ import annotations
 
 import asyncio
-import logging
 from dataclasses import dataclass
 from typing import Callable, Any
 
@@ -12,8 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from domains.rag_domain import JobResultStatus, JobStatus
 from infrastructures.db.repository.rag_repository import RagRepository
-
-log = logging.getLogger(__name__)
 
 
 @dataclass

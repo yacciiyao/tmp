@@ -6,17 +6,13 @@ from __future__ import annotations
 
 import asyncio
 
-from infrastructures.vconfig import VConfig
-from infrastructures.vlogger import init_logging
+from infrastructures.vconfig import vconfig
 from worker.analysis_worker import AnalysisWorker
 
 
 async def main() -> None:
-    cfg = VConfig()
-    init_logging(cfg.log_level)
-
     worker = AnalysisWorker()
-    await worker.run_forever(poll_seconds=int(cfg.worker_poll_interval))
+    await worker.run_forever(poll_seconds=int(vconfig.worker_poll_interval))
 
 
 if __name__ == "__main__":

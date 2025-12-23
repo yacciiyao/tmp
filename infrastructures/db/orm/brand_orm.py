@@ -4,13 +4,13 @@
 
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, DateTime, Float, Index, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Integer, String, BigInteger, UniqueConstraint, Index, DateTime, Numeric, Float
 from sqlalchemy.orm import Mapped, mapped_column
 
 from infrastructures.db.orm.orm_base import Base
 
 
-class YsBrandORM(Base):
+class SrcBrandsORM(Base):
     __tablename__ = "src_brands"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="ID")
@@ -37,7 +37,7 @@ class YsBrandORM(Base):
     )
 
 
-class YsBrandKeywordORM(Base):
+class SrcBrandKeywordsORM(Base):
     __tablename__ = "src_brand_keywords"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -53,12 +53,13 @@ class YsBrandKeywordORM(Base):
     )
 
 
-class YsBrandWebsiteORM(Base):
+class SrcBrandWebsitesORM(Base):
     __tablename__ = "src_brand_websites"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="ID")
     brand_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="品牌ID")
-    web_type: Mapped[str] = mapped_column(String(1), nullable=False, default="1", comment="网站类型:1独立站/2第三方平台")
+    web_type: Mapped[str] = mapped_column(String(1), nullable=False, default="1",
+                                          comment="网站类型:1独立站/2第三方平台")
     web_name: Mapped[str] = mapped_column(String(128), nullable=False, default="", comment="网站名称")
     web_url: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="域名")
     status: Mapped[str] = mapped_column(String(1), nullable=False, default="1", comment="状态:0禁用/1启用")
@@ -71,13 +72,14 @@ class YsBrandWebsiteORM(Base):
     )
 
 
-class YsBrandAmazonDataORM(Base):
+class SrcBrandAmazonDataORM(Base):
     __tablename__ = "src_brand_amazon_data"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="ID")
     brand_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="品牌ID")
     keywords: Mapped[str] = mapped_column(String(128), nullable=False, comment="关键词")
-    date_type: Mapped[str] = mapped_column(String(8), nullable=False, default="month", comment="日期类型:year/month/week/day")
+    date_type: Mapped[str] = mapped_column(String(8), nullable=False, default="month",
+                                           comment="日期类型:year/month/week/day")
     search_date: Mapped[int] = mapped_column(BigInteger, nullable=False, comment="搜索日期")
     search_volume: Mapped[float] = mapped_column(Numeric(20, 4), nullable=False, default=0, comment="搜索量")
     updated_at: Mapped[int | None] = mapped_column("update_time", BigInteger, nullable=True, comment="更新时间")
@@ -90,13 +92,14 @@ class YsBrandAmazonDataORM(Base):
     )
 
 
-class YsBrandGoogleDataORM(Base):
+class SrcBrandGoogleDataORM(Base):
     __tablename__ = "src_brand_google_data"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="ID")
     brand_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0, comment="品牌ID")
     keywords: Mapped[str] = mapped_column(String(128), nullable=False, default="", comment="关键词")
-    date_type: Mapped[str] = mapped_column(String(8), nullable=False, default="week", comment="日期类型:year/month/week/day")
+    date_type: Mapped[str] = mapped_column(String(8), nullable=False, default="week",
+                                           comment="日期类型:year/month/week/day")
     search_date: Mapped[int] = mapped_column(BigInteger, nullable=False, comment="搜索日期")
     dt: Mapped[str | None] = mapped_column(String(16), nullable=True)
     search_volume: Mapped[float] = mapped_column(Numeric(20, 4), nullable=False, default=0, comment="搜索量")
@@ -110,7 +113,7 @@ class YsBrandGoogleDataORM(Base):
     )
 
 
-class YsBrandIndependenceDataORM(Base):
+class SrcBrandSimilarwebDataORM(Base):
     __tablename__ = "src_brand_similarweb_data"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="ID")
@@ -118,7 +121,8 @@ class YsBrandIndependenceDataORM(Base):
     website_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     web_url: Mapped[str] = mapped_column(String(512), nullable=False, comment="域名")
 
-    date_type: Mapped[str] = mapped_column(String(8), nullable=False, default="month", comment="日期类型:year/month/week/day")
+    date_type: Mapped[str] = mapped_column(String(8), nullable=False, default="month",
+                                           comment="日期类型:year/month/week/day")
     search_date: Mapped[int] = mapped_column(BigInteger, nullable=False, comment="搜索日期")
     search_volume: Mapped[float] = mapped_column(Numeric(20, 4), nullable=False, default=0, comment="热度值")
     last_month: Mapped[str] = mapped_column(String(16), nullable=False, comment="月份")

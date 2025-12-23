@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+# @Author: yaccii
+# @Description:
+
 from __future__ import annotations
 
 from functools import lru_cache
@@ -106,7 +109,6 @@ class VConfig(BaseSettings):
     spider_redis_list_key: str = Field("spider:tasks", validation_alias="SPIDER_REDIS_LIST_KEY")
     spider_redis_timeout_seconds: float = Field(5.0, validation_alias="SPIDER_REDIS_TIMEOUT_SECONDS", gt=0)
 
-
     @field_validator("whisper_language", mode="before")
     @classmethod
     def _normalize_whisper_language(cls, v):
@@ -133,4 +135,4 @@ def get_config() -> VConfig:
     return VConfig()
 
 
-config = get_config()
+vconfig = get_config()

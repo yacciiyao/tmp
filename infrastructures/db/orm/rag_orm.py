@@ -6,14 +6,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import BigInteger, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import String, Text, Integer, ForeignKey, BigInteger, Index, UniqueConstraint, JSON
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import Mapped, mapped_column
 
-from infrastructures.db.orm.orm_base import Base, TimestampMixin, now_ts
+from infrastructures.db.orm.orm_base import TimestampMixin, Base, now_ts
 
 
-class SpaceORM(TimestampMixin, Base):
+class MetaRagSpacesORM(TimestampMixin, Base):
     __tablename__ = "meta_rag_spaces"
 
     kb_space: Mapped[str] = mapped_column(String(64), primary_key=True, nullable=False, comment="业务域code(主键)")
@@ -24,7 +24,7 @@ class SpaceORM(TimestampMixin, Base):
     status: Mapped[int] = mapped_column(Integer, nullable=False, default=1, comment="状态：0停用/1启用")
 
 
-class DocumentORM(TimestampMixin, Base):
+class MetaRagDocumentsORM(TimestampMixin, Base):
     __tablename__ = "meta_rag_documents"
 
     document_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="文档ID(自增)")
@@ -67,7 +67,7 @@ class DocumentORM(TimestampMixin, Base):
     )
 
 
-class IngestJobORM(TimestampMixin, Base):
+class OpsRagIngestJobsORM(TimestampMixin, Base):
     __tablename__ = "ops_rag_ingest_jobs"
 
     job_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="作业ID(自增)")
@@ -112,7 +112,7 @@ class IngestJobORM(TimestampMixin, Base):
     )
 
 
-class ChunkORM(Base):
+class StgRagChunksORM(Base):
     __tablename__ = "stg_rag_chunks"
 
     chunk_id: Mapped[str] = mapped_column(String(64), primary_key=True, nullable=False, comment="chunk主键(稳定ID)")
@@ -132,7 +132,8 @@ class ChunkORM(Base):
     index_version: Mapped[int] = mapped_column(Integer, nullable=False, comment="索引版本号")
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False, comment="chunk序号(从0开始)")
 
-    modality: Mapped[str] = mapped_column(String(16), nullable=False, default="text", comment="类型:text/image/audio/mixed")
+    modality: Mapped[str] = mapped_column(String(16), nullable=False, default="text",
+                                          comment="类型:text/image/audio/mixed")
     locator: Mapped[dict[str, Any] | None] = mapped_column(
         MutableDict.as_mutable(JSON),
         nullable=True,

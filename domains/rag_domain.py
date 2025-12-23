@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 # @Author: yaccii
 # @Description: space -> document -> chunk, jobs
+
 from __future__ import annotations
 
-from enum import Enum, IntEnum
-from typing import Any, Dict, Optional, List
+from enum import IntEnum, Enum
+from typing import Optional, Dict, Any, List
 
 from pydantic import Field
 

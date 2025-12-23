@@ -6,14 +6,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import ForeignKey, Index, Integer, JSON, String, Text
+from sqlalchemy import Integer, String, JSON, ForeignKey, Index, Text
 from sqlalchemy.ext.mutable import MutableDict, MutableList
 from sqlalchemy.orm import Mapped, mapped_column
 
-from infrastructures.db.orm.orm_base import Base, TimestampMixin
+from infrastructures.db.orm.orm_base import TimestampMixin, Base
 
 
-class SpiderTaskORM(TimestampMixin, Base):
+class OpsSpiderTasksORM(TimestampMixin, Base):
     __tablename__ = "ops_spider_tasks"
 
     task_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="任务ID(自增)")
@@ -51,7 +51,7 @@ class SpiderTaskORM(TimestampMixin, Base):
     )
 
 
-Index("uq_sp_tkey", SpiderTaskORM.task_key, unique=True)
-Index("ix_sp_type_st", SpiderTaskORM.task_type, SpiderTaskORM.status)
-Index("ix_sp_biz_st", SpiderTaskORM.biz, SpiderTaskORM.status)
-Index("ix_sp_cby", SpiderTaskORM.created_by)
+Index("uq_sp_tkey", OpsSpiderTasksORM.task_key, unique=True)
+Index("ix_sp_type_st", OpsSpiderTasksORM.task_type, OpsSpiderTasksORM.status)
+Index("ix_sp_biz_st", OpsSpiderTasksORM.biz, OpsSpiderTasksORM.status)
+Index("ix_sp_cby", OpsSpiderTasksORM.created_by)

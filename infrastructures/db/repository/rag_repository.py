@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 # @Author: yaccii
+# @Description:
 
 from __future__ import annotations
 
@@ -11,15 +12,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from domains.rag_domain import DocumentStatus, JobStatus
-from infrastructures.db.orm.rag_orm import SpaceORM, DocumentORM, IngestJobORM, ChunkORM
+from infrastructures.db.orm.rag_orm import MetaRagSpacesORM, MetaRagDocumentsORM, OpsRagIngestJobsORM, StgRagChunksORM
 from infrastructures.db.repository.repository_base import now_ts
 
 
 class RagRepository:
     # -------- Space --------
 
+    @staticmethod
     async def create_space(
-            self,
             db: AsyncSession,
             *,
             kb_space: str,
@@ -27,8 +28,8 @@ class RagRepository:
             description: Optional[str] = None,
             enabled: int = 1,
             status: int = 1,
-    ) -> SpaceORM:
-        space = SpaceORM(
+    ) -> MetaRagSpacesORM:
+        space = MetaRagSpacesORM(
             kb_space=kb_space,
             display_name=display_name,
             description=description,
@@ -39,39 +40,40 @@ class RagRepository:
         await db.flush()
         return space
 
-    async def get_space(self, db: AsyncSession, *, kb_space: str) -> Optional[SpaceORM]:
-        stmt = select(SpaceORM).where(SpaceORM.kb_space == kb_space)
+    @staticmethod
+    async def get_space(db: AsyncSession, *, kb_space: str) -> Optional[MetaRagSpacesORM]:
+        stmt = select(MetaRagSpacesORM).where(MetaRagSpacesORM.kb_space == kb_space)
         res = await db.execute(stmt)
         return res.scalars().first()
 
+    @staticmethod
     async def list_spaces(
-        self,
-        db: AsyncSession,
-        *,
-        enabled: Optional[int] = None,
-        status: Optional[int] = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> List[SpaceORM]:
-        stmt = select(SpaceORM)
+            db: AsyncSession,
+            *,
+            enabled: Optional[int] = None,
+            status: Optional[int] = None,
+            limit: int = 50,
+            offset: int = 0,
+    ) -> List[MetaRagSpacesORM]:
+        stmt = select(MetaRagSpacesORM)
         if enabled is not None:
-            stmt = stmt.where(SpaceORM.enabled == int(enabled))
+            stmt = stmt.where(MetaRagSpacesORM.enabled == int(enabled))
         if status is not None:
-            stmt = stmt.where(SpaceORM.status == int(status))
+            stmt = stmt.where(MetaRagSpacesORM.status == int(status))
         stmt = stmt.offset(int(offset)).limit(int(limit))
 
         res = await db.execute(stmt)
         return list(res.scalars().all())
 
+    @staticmethod
     async def update_space(
-        self,
-        db: AsyncSession,
-        *,
-        kb_space: str,
-        display_name: Optional[str] = None,
-        description: Optional[str] = None,
-        enabled: Optional[int] = None,
-        status: Optional[int] = None,
+            db: AsyncSession,
+            *,
+            kb_space: str,
+            display_name: Optional[str] = None,
+            description: Optional[str] = None,
+            enabled: Optional[int] = None,
+            status: Optional[int] = None,
     ) -> int:
         values = {}
         if display_name is not None:
@@ -88,34 +90,34 @@ class RagRepository:
 
         values["updated_at"] = now_ts()
 
-        stmt = update(SpaceORM).where(SpaceORM.kb_space == kb_space).values(**values)
+        stmt = update(MetaRagSpacesORM).where(MetaRagSpacesORM.kb_space == kb_space).values(**values)
         res = await db.execute(stmt)
         return int(res.rowcount or 0)
 
     async def delete_space(self, db: AsyncSession, *, kb_space: str) -> int:
         ts = now_ts()
         stmt = (
-            update(SpaceORM)
-            .where(SpaceORM.kb_space == kb_space)
+            update(MetaRagSpacesORM)
+            .where(MetaRagSpacesORM.kb_space == kb_space)
             .values(enabled=0, status=0, updated_at=ts)
         )
         res = await db.execute(stmt)
         return int(res.rowcount or 0)
 
+    @staticmethod
     async def create_document(
-        self,
-        db: AsyncSession,
-        *,
-        kb_space: str = "default",
-        filename: str,
-        content_type: str,
-        size: int,
-        storage_uri: str,
-        sha256: str,
-        uploader_user_id: int,
-        status: int = DocumentStatus.UPLOADED,
-    ) -> DocumentORM:
-        doc = DocumentORM(
+            db: AsyncSession,
+            *,
+            kb_space: str = "default",
+            filename: str,
+            content_type: str,
+            size: int,
+            storage_uri: str,
+            sha256: str,
+            uploader_user_id: int,
+            status: int = DocumentStatus.UPLOADED,
+    ) -> MetaRagDocumentsORM:
+        doc = MetaRagDocumentsORM(
             kb_space=kb_space,
             filename=filename,
             content_type=content_type,
@@ -129,175 +131,177 @@ class RagRepository:
         await db.flush()
         return doc
 
+    @staticmethod
     async def get_document(
-        self,
-        db: AsyncSession,
-        *,
-        document_id: int,
-        include_deleted: bool = False,
-    ) -> Optional[DocumentORM]:
-        stmt = select(DocumentORM).where(DocumentORM.document_id == int(document_id))
+            db: AsyncSession,
+            *,
+            document_id: int,
+            include_deleted: bool = False,
+    ) -> Optional[MetaRagDocumentsORM]:
+        stmt = select(MetaRagDocumentsORM).where(MetaRagDocumentsORM.document_id == int(document_id))
         if not include_deleted:
-            stmt = stmt.where(DocumentORM.status != DocumentStatus.DELETED)
+            stmt = stmt.where(MetaRagDocumentsORM.status != DocumentStatus.DELETED)
         res = await db.execute(stmt)
         return res.scalars().first()
 
+    @staticmethod
     async def list_documents(
-        self,
-        db: AsyncSession,
-        *,
-        kb_space: Optional[str] = None,
-        document_id: Optional[int] = None,
-        statuses: Optional[List[int]] = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> List[DocumentORM]:
-        stmt = select(DocumentORM)
+            db: AsyncSession,
+            *,
+            kb_space: Optional[str] = None,
+            document_id: Optional[int] = None,
+            statuses: Optional[List[int]] = None,
+            limit: int = 50,
+            offset: int = 0,
+    ) -> List[MetaRagDocumentsORM]:
+        stmt = select(MetaRagDocumentsORM)
 
         if kb_space is not None:
-            stmt = stmt.where(DocumentORM.kb_space == kb_space)
+            stmt = stmt.where(MetaRagDocumentsORM.kb_space == kb_space)
         if document_id is not None:
-            stmt = stmt.where(DocumentORM.document_id == int(document_id))
+            stmt = stmt.where(MetaRagDocumentsORM.document_id == int(document_id))
 
         if statuses is None:
-            stmt = stmt.where(DocumentORM.status != DocumentStatus.DELETED)
+            stmt = stmt.where(MetaRagDocumentsORM.status != DocumentStatus.DELETED)
         else:
-            stmt = stmt.where(DocumentORM.status.in_([int(x) for x in statuses]))
+            stmt = stmt.where(MetaRagDocumentsORM.status.in_([int(x) for x in statuses]))
 
         stmt = stmt.offset(int(offset)).limit(int(limit))
         res = await db.execute(stmt)
         return list(res.scalars().all())
 
+    @staticmethod
     async def update_document_status(
-        self,
-        db: AsyncSession,
-        *,
-        document_id: int,
-        status: int,
-        last_error: Optional[str] = None,
+            db: AsyncSession,
+            *,
+            document_id: int,
+            status: int,
+            last_error: Optional[str] = None,
     ) -> int:
         values = {"status": int(status), "updated_at": now_ts()}
         if last_error is not None:
             values["last_error"] = last_error
 
         stmt = (
-            update(DocumentORM)
-            .where(DocumentORM.document_id == int(document_id))
+            update(MetaRagDocumentsORM)
+            .where(MetaRagDocumentsORM.document_id == int(document_id))
             .values(**values)
         )
         res = await db.execute(stmt)
         return int(res.rowcount or 0)
 
+    @staticmethod
     async def set_active_index_version(
-        self,
-        db: AsyncSession,
-        *,
-        document_id: int,
-        active_index_version: int,
+            db: AsyncSession,
+            *,
+            document_id: int,
+            active_index_version: int,
     ) -> int:
         stmt = (
-            update(DocumentORM)
-            .where(DocumentORM.document_id == int(document_id))
+            update(MetaRagDocumentsORM)
+            .where(MetaRagDocumentsORM.document_id == int(document_id))
             .values(active_index_version=int(active_index_version), updated_at=now_ts())
         )
         res = await db.execute(stmt)
         return int(res.rowcount or 0)
 
+    @staticmethod
     async def update_document_filename(
-        self,
-        db: AsyncSession,
-        *,
-        document_id: int,
-        filename: str,
+            db: AsyncSession,
+            *,
+            document_id: int,
+            filename: str,
     ) -> int:
         stmt = (
-            update(DocumentORM)
-            .where(DocumentORM.document_id == int(document_id))
+            update(MetaRagDocumentsORM)
+            .where(MetaRagDocumentsORM.document_id == int(document_id))
             .values(filename=str(filename), updated_at=now_ts())
         )
         res = await db.execute(stmt)
         return int(res.rowcount or 0)
 
-
+    @staticmethod
     async def mark_document_deleted(
-        self,
-        db: AsyncSession,
-        *,
-        document_id: int,
+            db: AsyncSession,
+            *,
+            document_id: int,
     ) -> int:
         ts = now_ts()
         stmt = (
-            update(DocumentORM)
-            .where(DocumentORM.document_id == int(document_id))
+            update(MetaRagDocumentsORM)
+            .where(MetaRagDocumentsORM.document_id == int(document_id))
             .values(status=DocumentStatus.DELETED, deleted_at=ts, updated_at=ts)
         )
         res = await db.execute(stmt)
         return int(res.rowcount or 0)
 
+    @staticmethod
     async def mark_documents_deleted_by_space(
-        self,
-        db: AsyncSession,
-        *,
-        kb_space: str,
+            db: AsyncSession,
+            *,
+            kb_space: str,
     ) -> int:
         ts = now_ts()
         stmt = (
-            update(DocumentORM)
-            .where(DocumentORM.kb_space == kb_space)
+            update(MetaRagDocumentsORM)
+            .where(MetaRagDocumentsORM.kb_space == kb_space)
             .values(status=DocumentStatus.DELETED, deleted_at=ts, updated_at=ts)
         )
         res = await db.execute(stmt)
         return int(res.rowcount or 0)
 
     async def delete_space_cascade(
-        self,
-        db: AsyncSession,
-        *,
-        kb_space: str,
+            self,
+            db: AsyncSession,
+            *,
+            kb_space: str,
     ) -> tuple[int, int]:
         space_rows = await self.delete_space(db, kb_space=kb_space)
         doc_rows = await self.mark_documents_deleted_by_space(db, kb_space=kb_space)
         await self.cancel_jobs_by_space(db, kb_space=kb_space, last_error="space deleted")
         return space_rows, doc_rows
 
-    async def get_job(self, db: AsyncSession, *, job_id: int) -> Optional[IngestJobORM]:
-        stmt = select(IngestJobORM).where(IngestJobORM.job_id == int(job_id))
+    @staticmethod
+    async def get_job(db: AsyncSession, *, job_id: int) -> Optional[OpsRagIngestJobsORM]:
+        stmt = select(OpsRagIngestJobsORM).where(OpsRagIngestJobsORM.job_id == int(job_id))
         res = await db.execute(stmt)
         return res.scalars().first()
 
-    async def get_job_by_idempotency_key(self, db: AsyncSession, *, idempotency_key: str) -> Optional[IngestJobORM]:
-        stmt = select(IngestJobORM).where(IngestJobORM.idempotency_key == idempotency_key)
+    @staticmethod
+    async def get_job_by_idempotency_key(db: AsyncSession, *, idempotency_key: str) -> Optional[OpsRagIngestJobsORM]:
+        stmt = select(OpsRagIngestJobsORM).where(OpsRagIngestJobsORM.idempotency_key == idempotency_key)
         res = await db.execute(stmt)
         return res.scalars().first()
 
+    @staticmethod
     async def list_jobs(
-        self,
-        db: AsyncSession,
-        *,
-        kb_space: Optional[str] = None,
-        document_id: Optional[int] = None,
-        statuses: Optional[List[int]] = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> List[IngestJobORM]:
-        stmt = select(IngestJobORM)
+            db: AsyncSession,
+            *,
+            kb_space: Optional[str] = None,
+            document_id: Optional[int] = None,
+            statuses: Optional[List[int]] = None,
+            limit: int = 50,
+            offset: int = 0,
+    ) -> List[OpsRagIngestJobsORM]:
+        stmt = select(OpsRagIngestJobsORM)
 
         if kb_space is not None:
-            stmt = stmt.where(IngestJobORM.kb_space == kb_space)
+            stmt = stmt.where(OpsRagIngestJobsORM.kb_space == kb_space)
         if document_id is not None:
-            stmt = stmt.where(IngestJobORM.document_id == int(document_id))
+            stmt = stmt.where(OpsRagIngestJobsORM.document_id == int(document_id))
 
-        if statuses is not None:
-            stmt = stmt.where(IngestJobORM.status.in_([int(x) for x in statuses]))
+        if statuses:
+            stmt = stmt.where(OpsRagIngestJobsORM.status.in_([int(x) for x in statuses]))
 
-        stmt = stmt.order_by(IngestJobORM.job_id.desc()).offset(int(offset)).limit(int(limit))
+        stmt = stmt.order_by(OpsRagIngestJobsORM.job_id.desc()).offset(int(offset)).limit(int(limit))
         res = await db.execute(stmt)
         return list(res.scalars().all())
 
-    async def allocate_index_version(self, db: AsyncSession, *, document_id: int) -> int:
+    @staticmethod
+    async def allocate_index_version(db: AsyncSession, *, document_id: int) -> int:
         stmt = (
-            select(DocumentORM.active_index_version)
-            .where(DocumentORM.document_id == int(document_id))
+            select(MetaRagDocumentsORM.active_index_version)
+            .where(MetaRagDocumentsORM.document_id == int(document_id))
             .with_for_update()
         )
         res = await db.execute(stmt)
@@ -311,20 +315,20 @@ class RagRepository:
         return hashlib.sha256(raw).hexdigest()
 
     async def create_job_for_document(
-        self,
-        db: AsyncSession,
-        *,
-        document_id: int,
-        kb_space: str,
-        pipeline_version: str = "v1",
-        max_retries: int = 3,
-    ) -> IngestJobORM:
+            self,
+            db: AsyncSession,
+            *,
+            document_id: int,
+            kb_space: str,
+            pipeline_version: str = "v1",
+            max_retries: int = 3,
+    ) -> OpsRagIngestJobsORM:
         index_version = await self.allocate_index_version(db, document_id=document_id)
         idem = self._make_idempotency_key(
             document_id=document_id, pipeline_version=pipeline_version, index_version=index_version
         )
 
-        job = IngestJobORM(
+        job = OpsRagIngestJobsORM(
             document_id=int(document_id),
             kb_space=kb_space,
             pipeline_version=pipeline_version,
@@ -346,30 +350,31 @@ class RagRepository:
                 raise
             return existing
 
+    @staticmethod
     async def claim_next_job(
-        self,
-        db: AsyncSession,
-        *,
-        worker_id: str,
-        lease_seconds: int,
-    ) -> Optional[IngestJobORM]:
+            db: AsyncSession,
+            *,
+            worker_id: str,
+            lease_seconds: int,
+    ) -> Optional[OpsRagIngestJobsORM]:
         now = now_ts()
         lease_until = now + int(lease_seconds)
 
         claimable = or_(
-            IngestJobORM.status == JobStatus.PENDING,
-            and_(IngestJobORM.status == JobStatus.FAILED, IngestJobORM.try_count < IngestJobORM.max_retries),
+            OpsRagIngestJobsORM.status == JobStatus.PENDING,
+            and_(OpsRagIngestJobsORM.status == JobStatus.FAILED,
+                 OpsRagIngestJobsORM.try_count < OpsRagIngestJobsORM.max_retries),
             and_(
-                IngestJobORM.status == JobStatus.RUNNING,
-                or_(IngestJobORM.locked_until.is_(None), IngestJobORM.locked_until < now),
-                IngestJobORM.try_count < IngestJobORM.max_retries,
+                OpsRagIngestJobsORM.status == JobStatus.RUNNING,
+                or_(OpsRagIngestJobsORM.locked_until.is_(None), OpsRagIngestJobsORM.locked_until < now),
+                OpsRagIngestJobsORM.try_count < OpsRagIngestJobsORM.max_retries,
             ),
         )
 
         stmt = (
-            select(IngestJobORM)
+            select(OpsRagIngestJobsORM)
             .where(claimable)
-            .order_by(IngestJobORM.job_id.asc())
+            .order_by(OpsRagIngestJobsORM.job_id.asc())
             .limit(1)
             .with_for_update(skip_locked=True)
         )
@@ -387,35 +392,35 @@ class RagRepository:
         await db.flush()
         return job
 
+    @staticmethod
     async def renew_job_lease(
-        self,
-        db: AsyncSession,
-        *,
-        job_id: int,
-        worker_id: str,
-        lease_seconds: int,
+            db: AsyncSession,
+            *,
+            job_id: int,
+            worker_id: str,
+            lease_seconds: int,
     ) -> int:
         now = now_ts()
         lease_until = now + int(lease_seconds)
 
         stmt = (
-            update(IngestJobORM)
-            .where(IngestJobORM.job_id == int(job_id))
-            .where(IngestJobORM.status == JobStatus.RUNNING)
-            .where(IngestJobORM.locked_by == worker_id)
+            update(OpsRagIngestJobsORM)
+            .where(OpsRagIngestJobsORM.job_id == int(job_id))
+            .where(OpsRagIngestJobsORM.status == JobStatus.RUNNING)
+            .where(OpsRagIngestJobsORM.locked_by == worker_id)
             .values(locked_until=lease_until, updated_at=now)
         )
         res = await db.execute(stmt)
         return int(res.rowcount or 0)
 
+    @staticmethod
     async def finish_job(
-        self,
-        db: AsyncSession,
-        *,
-        job_id: int,
-        status: int,
-        last_error: Optional[str] = None,
-        clear_lock: bool = True,
+            db: AsyncSession,
+            *,
+            job_id: int,
+            status: int,
+            last_error: Optional[str] = None,
+            clear_lock: bool = True,
     ) -> int:
         values = {"status": int(status), "updated_at": now_ts()}
         if last_error is not None:
@@ -424,51 +429,52 @@ class RagRepository:
             values["locked_by"] = None
             values["locked_until"] = None
 
-        stmt = update(IngestJobORM).where(IngestJobORM.job_id == int(job_id)).values(**values)
+        stmt = update(OpsRagIngestJobsORM).where(OpsRagIngestJobsORM.job_id == int(job_id)).values(**values)
         res = await db.execute(stmt)
         return int(res.rowcount or 0)
 
     async def cancel_jobs_by_document(
-        self,
-        db: AsyncSession,
-        *,
-        document_id: int,
-        last_error: Optional[str] = None,
+            self,
+            db: AsyncSession,
+            *,
+            document_id: int,
+            last_error: Optional[str] = None,
     ) -> int:
         values = {"status": JobStatus.CANCELLED, "updated_at": now_ts(), "locked_by": None, "locked_until": None}
         if last_error is not None:
             values["last_error"] = last_error
 
         stmt = (
-            update(IngestJobORM)
-            .where(IngestJobORM.document_id == int(document_id))
-            .where(IngestJobORM.status.in_([JobStatus.PENDING, JobStatus.RUNNING, JobStatus.FAILED]))
+            update(OpsRagIngestJobsORM)
+            .where(OpsRagIngestJobsORM.document_id == int(document_id))
+            .where(OpsRagIngestJobsORM.status.in_([JobStatus.PENDING, JobStatus.RUNNING, JobStatus.FAILED]))
             .values(**values)
         )
         res = await db.execute(stmt)
         return int(res.rowcount or 0)
 
+    @staticmethod
     async def cancel_jobs_by_space(
-        self,
-        db: AsyncSession,
-        *,
-        kb_space: str,
-        last_error: Optional[str] = None,
+            db: AsyncSession,
+            *,
+            kb_space: str,
+            last_error: Optional[str] = None,
     ) -> int:
         values = {"status": JobStatus.CANCELLED, "updated_at": now_ts(), "locked_by": None, "locked_until": None}
         if last_error is not None:
             values["last_error"] = last_error
 
         stmt = (
-            update(IngestJobORM)
-            .where(IngestJobORM.kb_space == kb_space)
-            .where(IngestJobORM.status.in_([JobStatus.PENDING, JobStatus.RUNNING, JobStatus.FAILED]))
+            update(OpsRagIngestJobsORM)
+            .where(OpsRagIngestJobsORM.kb_space == kb_space)
+            .where(OpsRagIngestJobsORM.status.in_([JobStatus.PENDING, JobStatus.RUNNING, JobStatus.FAILED]))
             .values(**values)
         )
         res = await db.execute(stmt)
         return int(res.rowcount or 0)
 
-    async def create_chunks(self, db: AsyncSession, *, chunks: List[Dict[str, Any]]) -> int:
+    @staticmethod
+    async def create_chunks(db: AsyncSession, *, chunks: List[Dict[str, Any]]) -> int:
         if not chunks:
             return 0
 
@@ -476,82 +482,82 @@ class RagRepository:
         for c in chunks:
             item = dict(c)
             item.pop("created_at", None)
-            objs.append(ChunkORM(**item))
+            objs.append(StgRagChunksORM(**item))
 
         db.add_all(objs)
         await db.flush()
         return len(objs)
 
+    @staticmethod
     async def delete_chunks_by_document_version(
-        self,
-        db: AsyncSession,
-        *,
-        document_id: int,
-        index_version: int,
+            db: AsyncSession,
+            *,
+            document_id: int,
+            index_version: int,
     ) -> int:
         stmt = (
-            delete(ChunkORM)
-            .where(ChunkORM.document_id == int(document_id))
-            .where(ChunkORM.index_version == int(index_version))
+            delete(StgRagChunksORM)
+            .where(StgRagChunksORM.document_id == int(document_id))
+            .where(StgRagChunksORM.index_version == int(index_version))
         )
         res = await db.execute(stmt)
         return int(res.rowcount or 0)
 
     async def replace_chunks_by_document_version(
-        self,
-        db: AsyncSession,
-        *,
-        document_id: int,
-        index_version: int,
-        chunks: List[Dict[str, Any]],
+            self,
+            db: AsyncSession,
+            *,
+            document_id: int,
+            index_version: int,
+            chunks: List[Dict[str, Any]],
     ) -> int:
         await self.delete_chunks_by_document_version(db, document_id=document_id, index_version=index_version)
         return await self.create_chunks(db, chunks=chunks)
 
+    @staticmethod
     async def list_chunks(
-        self,
-        db: AsyncSession,
-        *,
-        document_id: int,
-        index_version: int,
-        limit: int = 200,
-        offset: int = 0,
-    ) -> List[ChunkORM]:
+            db: AsyncSession,
+            *,
+            document_id: int,
+            index_version: int,
+            limit: int = 200,
+            offset: int = 0,
+    ) -> List[StgRagChunksORM]:
         stmt = (
-            select(ChunkORM)
-            .where(ChunkORM.document_id == int(document_id))
-            .where(ChunkORM.index_version == int(index_version))
-            .order_by(ChunkORM.chunk_index.asc())
+            select(StgRagChunksORM)
+            .where(StgRagChunksORM.document_id == int(document_id))
+            .where(StgRagChunksORM.index_version == int(index_version))
+            .order_by(StgRagChunksORM.chunk_index.asc())
             .offset(int(offset))
             .limit(int(limit))
         )
         res = await db.execute(stmt)
         return list(res.scalars().all())
 
+    @staticmethod
     async def get_chunks_by_ids(
-        self,
-        db: AsyncSession,
-        *,
-        chunk_ids: Sequence[str],
-        kb_space: Optional[str] = None,
-    ) -> List[ChunkORM]:
+            db: AsyncSession,
+            *,
+            chunk_ids: Sequence[str],
+            kb_space: Optional[str] = None,
+    ) -> List[StgRagChunksORM]:
         if not chunk_ids:
             return []
 
-        stmt = select(ChunkORM).where(ChunkORM.chunk_id.in_(list(chunk_ids)))
+        stmt = select(StgRagChunksORM).where(StgRagChunksORM.chunk_id.in_(list(chunk_ids)))
         if kb_space:
-            stmt = stmt.where(ChunkORM.kb_space == kb_space)
+            stmt = stmt.where(StgRagChunksORM.kb_space == kb_space)
 
         rows = (await db.execute(stmt)).scalars().all()
         return list(rows)
 
+    @staticmethod
     async def get_searchable_chunks_by_ids(
-        self,
-        db: AsyncSession,
-        *,
-        chunk_ids: Sequence[str],
-        kb_space: str,
-    ) -> List[ChunkORM]:
+            db: AsyncSession,
+            *,
+            chunk_ids: Sequence[str],
+            kb_space: str,
+    ) -> List[StgRagChunksORM]:
         """
         Search 专用：只返回“可检索”的 chunk
         判定规则：
@@ -565,15 +571,15 @@ class RagRepository:
             return []
 
         stmt = (
-            select(ChunkORM)
-            .join(DocumentORM, DocumentORM.document_id == ChunkORM.document_id)
-            .where(ChunkORM.chunk_id.in_(list(chunk_ids)))
-            .where(ChunkORM.kb_space == kb_space)
-            .where(DocumentORM.kb_space == kb_space)
-            .where(DocumentORM.status == int(DocumentStatus.INDEXED))
-            .where(DocumentORM.status != int(DocumentStatus.DELETED))
-            .where(DocumentORM.active_index_version.is_not(None))
-            .where(ChunkORM.index_version == DocumentORM.active_index_version)
+            select(StgRagChunksORM)
+            .join(MetaRagDocumentsORM, MetaRagDocumentsORM.document_id == StgRagChunksORM.document_id)
+            .where(StgRagChunksORM.chunk_id.in_(list(chunk_ids)))
+            .where(StgRagChunksORM.kb_space == kb_space)
+            .where(MetaRagDocumentsORM.kb_space == kb_space)
+            .where(MetaRagDocumentsORM.status == int(DocumentStatus.INDEXED))
+            .where(MetaRagDocumentsORM.status != int(DocumentStatus.DELETED))
+            .where(MetaRagDocumentsORM.active_index_version.is_not(None))
+            .where(StgRagChunksORM.index_version == MetaRagDocumentsORM.active_index_version)
         )
 
         rows = (await db.execute(stmt)).scalars().all()

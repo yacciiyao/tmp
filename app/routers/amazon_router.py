@@ -8,11 +8,12 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.deps import get_current_user, get_db
+from app.deps import get_current_user
 from domains.amazon_domain import AmazonMarketReportReq
 from domains.analysis_job_domain import AnalysisJobVO
-from infrastructures.db.orm.analysis_job_orm import AnalysisJobORM
-from infrastructures.db.orm.user_orm import UserORM
+from infrastructures.db.orm.analysis_job_orm import OpsAnalysisJobsORM
+from infrastructures.db.orm.orm_deps import get_db
+from infrastructures.db.orm.user_orm import MetaUsersORM
 from services.agents.amazon.market_report_service import AmazonMarketReportService
 
 router = APIRouter(prefix="/amazon", tags=["amazon"])
@@ -24,7 +25,7 @@ class AmazonMarketReportSubmitResp(BaseModel):
     job: AnalysisJobVO
 
 
-def _job_to_vo(job: AnalysisJobORM) -> AnalysisJobVO:
+def _job_to_vo(job: OpsAnalysisJobsORM) -> AnalysisJobVO:
     return AnalysisJobVO(
         job_id=int(job.job_id),
         job_type=int(job.job_type),
@@ -43,9 +44,9 @@ def _job_to_vo(job: AnalysisJobORM) -> AnalysisJobVO:
 
 @router.post("/market-report", response_model=AmazonMarketReportSubmitResp)
 async def submit_market_report(
-    req: AmazonMarketReportReq,
-    db: AsyncSession = Depends(get_db),
-    current_user: UserORM = Depends(get_current_user),
+        req: AmazonMarketReportReq,
+        db: AsyncSession = Depends(get_db),
+        current_user: MetaUsersORM = Depends(get_current_user),
 ) -> AmazonMarketReportSubmitResp:
     job, _spider_task = await _svc.submit_market_report(db, req, created_by=current_user.user_id)
     return AmazonMarketReportSubmitResp(job=_job_to_vo(job))

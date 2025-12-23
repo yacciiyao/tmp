@@ -5,36 +5,30 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-
-from fastapi import APIRouter, FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, APIRouter, Request
+from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse, RedirectResponse
 
-from app.routers import auth_router, spider_router
-from app.routers import amazon_router
-from app.routers import analysis_router
-from app.routers import rag_router
+from app.routers import auth_router, rag_router, amazon_router, analysis_router, spider_router
 from domains.error_domain import AppError
-from infrastructures.db.orm.orm_base import init_db, AsyncSessionFactory
-from infrastructures.vconfig import config
-from infrastructures.vlogger import init_logging, logger
-from services.auth_service import AuthService
+from infrastructures.db.orm.orm_base import AsyncSessionFactory, init_db
 from infrastructures.db.repository.rag_repository import RagRepository
+from infrastructures.vconfig import vconfig
+from infrastructures.vlogger import vlogger
+from services.auth_service import AuthService
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    init_logging(config.log_level)
-
     # 1) 建表
     await init_db()
-    logger.info("database schema ensured")
+    vlogger.info("database schema ensured")
 
     # 2) 默认 admin
     async with AsyncSessionFactory() as db:
         auth_service = AuthService()
         await auth_service.ensure_default_admin(db)
-    logger.info("default admin ensured")
+    vlogger.info("default admin ensured")
 
     # 3) 默认 space（documents.kb_space 有外键约束，建议启动时保证 default 存在）
     repo = RagRepository()
@@ -44,12 +38,12 @@ async def lifespan(_app: FastAPI):
             if existing is None:
                 await repo.create_space(db, kb_space="default", display_name="Default", description="default",
                                         enabled=1, status=1)
-    logger.info("default space ensured")
+    vlogger.info("default space ensured")
 
     try:
         yield
     finally:
-        logger.info("application shutdown")
+        vlogger.info("application shutdown")
 
 
 def create_app() -> FastAPI:
@@ -71,7 +65,7 @@ def create_app() -> FastAPI:
         return JSONResponse(status_code=exc.http_status, content=exc.to_response().model_dump())
 
     # ---------- CORS ----------
-    cors = config.cors_origins.strip()
+    cors = vconfig.cors_origins.strip()
     if cors == "*":
         origins = ["*"]
     else:

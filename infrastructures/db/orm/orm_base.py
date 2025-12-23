@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
 # @Author: yaccii
 # @Description: ORM基类与数据库初始化
+
 from __future__ import annotations
 
 import time
 
 from sqlalchemy import BigInteger
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, AsyncSession, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from infrastructures.vconfig import config
+from infrastructures.vconfig import vconfig
 
 
 def now_ts() -> int:
@@ -37,8 +38,8 @@ def _ensure_db_engine() -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
         return _engine, _session_factory
 
     _engine = create_async_engine(
-        str(config.db_url),
-        echo=bool(config.sql_echo),
+        str(vconfig.db_url),
+        echo=bool(vconfig.sql_echo),
         pool_pre_ping=True,
     )
     _session_factory = async_sessionmaker(

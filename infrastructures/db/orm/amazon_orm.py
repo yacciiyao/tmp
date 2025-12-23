@@ -6,14 +6,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import BigInteger, Float, Index, Integer, JSON, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Integer, BigInteger, String, Numeric, Float, Text, JSON, UniqueConstraint, Index
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import Mapped, mapped_column
 
-from infrastructures.db.orm.orm_base import Base, TimestampMixin
+from infrastructures.db.orm.orm_base import TimestampMixin, Base
 
 
-class AmazonProductSnapshotORM(TimestampMixin, Base):
+class SrcAmazonProductSnapshotsORM(TimestampMixin, Base):
     __tablename__ = "src_amazon_product_snapshots"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="ID(自增)")
@@ -48,7 +48,7 @@ class AmazonProductSnapshotORM(TimestampMixin, Base):
     )
 
 
-class AmazonReviewORM(TimestampMixin, Base):
+class SrcAmazonReviewsORM(TimestampMixin, Base):
     __tablename__ = "src_amazon_reviews"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="ID(自增)")
@@ -79,7 +79,7 @@ class AmazonReviewORM(TimestampMixin, Base):
     )
 
 
-class AmazonKeywordMetricORM(TimestampMixin, Base):
+class SrcAmazonKeywordMetricsORM(TimestampMixin, Base):
     __tablename__ = "src_amazon_keyword_metrics"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="ID(自增)")

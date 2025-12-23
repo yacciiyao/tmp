@@ -4,15 +4,16 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Dict, Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.deps import get_current_user, get_db
+from app.deps import get_current_user
 from domains.error_domain import PermissionDeniedError
-from infrastructures.db.orm.user_orm import UserORM
+from infrastructures.db.orm.orm_deps import get_db
+from infrastructures.db.orm.user_orm import MetaUsersORM
 from services.jobs.analysis_job_service import AnalysisJobService
 from services.spider.spider_task_service import SpiderTaskService
 
@@ -39,17 +40,17 @@ class SpiderTaskStatusResp(BaseModel):
     error_message: str | None = None
 
 
-def _ensure_admin(user: UserORM) -> None:
+def _ensure_admin(user: MetaUsersORM) -> None:
     if user.role != "admin":
         raise PermissionDeniedError(message="仅管理员可操作", details={})
 
 
 @router.post("/tasks/{task_id}/ready", response_model=SpiderTaskStatusResp)
 async def mark_task_ready(
-    task_id: int,
-    req: SpiderTaskReadyReq,
-    db: AsyncSession = Depends(get_db),
-    current_user: UserORM = Depends(get_current_user),
+        task_id: int,
+        req: SpiderTaskReadyReq,
+        db: AsyncSession = Depends(get_db),
+        current_user: MetaUsersORM = Depends(get_current_user),
 ) -> SpiderTaskStatusResp:
     _ensure_admin(current_user)
 
@@ -72,10 +73,10 @@ async def mark_task_ready(
 
 @router.post("/tasks/{task_id}/failed", response_model=SpiderTaskStatusResp)
 async def mark_task_failed(
-    task_id: int,
-    req: SpiderTaskFailedReq,
-    db: AsyncSession = Depends(get_db),
-    current_user: UserORM = Depends(get_current_user),
+        task_id: int,
+        req: SpiderTaskFailedReq,
+        db: AsyncSession = Depends(get_db),
+        current_user: MetaUsersORM = Depends(get_current_user),
 ) -> SpiderTaskStatusResp:
     _ensure_admin(current_user)
 

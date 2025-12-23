@@ -10,7 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from infrastructures.db.orm.orm_base import Base, TimestampMixin
 
 
-class UserORM(TimestampMixin, Base):
+class MetaUsersORM(TimestampMixin, Base):
     __tablename__ = "meta_users"
 
     user_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="用户ID")

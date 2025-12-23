@@ -1,50 +1,51 @@
 # -*- coding: utf-8 -*-
 # @Author: yaccii
-# @Description: 品牌数据仓储（ys_brand* 表读取）
+# @Description: 品牌数据仓储
+
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Optional, List
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from infrastructures.db.orm.brand_orm import (
-    YsBrandAmazonDataORM,
-    YsBrandGoogleDataORM,
-    YsBrandIndependenceDataORM,
-    YsBrandKeywordORM,
-    YsBrandORM,
-    YsBrandWebsiteORM,
-)
+from infrastructures.db.orm.brand_orm import SrcBrandsORM, SrcBrandKeywordsORM, SrcBrandWebsitesORM, \
+    SrcBrandAmazonDataORM, SrcBrandGoogleDataORM, SrcBrandSimilarwebDataORM
 
 
 class BrandRepository:
-    async def get_brand(self, db: AsyncSession, brand_id: int) -> Optional[YsBrandORM]:
-        stmt = select(YsBrandORM).where(YsBrandORM.id == brand_id)
+    @staticmethod
+    async def get_brand(db: AsyncSession, brand_id: int) -> Optional[SrcBrandsORM]:
+        stmt = select(SrcBrandsORM).where(SrcBrandsORM.id == brand_id)
         res = await db.execute(stmt)
         return res.scalar_one_or_none()
 
-    async def list_keywords(self, db: AsyncSession, brand_id: int) -> List[YsBrandKeywordORM]:
-        stmt = select(YsBrandKeywordORM).where(YsBrandKeywordORM.brand_id == brand_id)
+    @staticmethod
+    async def list_keywords(db: AsyncSession, brand_id: int) -> List[SrcBrandKeywordsORM]:
+        stmt = select(SrcBrandKeywordsORM).where(SrcBrandKeywordsORM.brand_id == brand_id)
         res = await db.execute(stmt)
         return list(res.scalars().all())
 
-    async def list_websites(self, db: AsyncSession, brand_id: int) -> List[YsBrandWebsiteORM]:
-        stmt = select(YsBrandWebsiteORM).where(YsBrandWebsiteORM.brand_id == brand_id)
+    @staticmethod
+    async def list_websites(db: AsyncSession, brand_id: int) -> List[SrcBrandWebsitesORM]:
+        stmt = select(SrcBrandWebsitesORM).where(SrcBrandWebsitesORM.brand_id == brand_id)
         res = await db.execute(stmt)
         return list(res.scalars().all())
 
-    async def list_amazon_data(self, db: AsyncSession, brand_id: int) -> List[YsBrandAmazonDataORM]:
-        stmt = select(YsBrandAmazonDataORM).where(YsBrandAmazonDataORM.brand_id == brand_id)
+    @staticmethod
+    async def list_amazon_data(db: AsyncSession, brand_id: int) -> List[SrcBrandAmazonDataORM]:
+        stmt = select(SrcBrandAmazonDataORM).where(SrcBrandAmazonDataORM.brand_id == brand_id)
         res = await db.execute(stmt)
         return list(res.scalars().all())
 
-    async def list_google_data(self, db: AsyncSession, brand_id: int) -> List[YsBrandGoogleDataORM]:
-        stmt = select(YsBrandGoogleDataORM).where(YsBrandGoogleDataORM.brand_id == brand_id)
+    @staticmethod
+    async def list_google_data(db: AsyncSession, brand_id: int) -> List[SrcBrandGoogleDataORM]:
+        stmt = select(SrcBrandGoogleDataORM).where(SrcBrandGoogleDataORM.brand_id == brand_id)
         res = await db.execute(stmt)
         return list(res.scalars().all())
 
-    async def list_independence_data(self, db: AsyncSession, brand_id: int) -> List[YsBrandIndependenceDataORM]:
-        stmt = select(YsBrandIndependenceDataORM).where(YsBrandIndependenceDataORM.brand_id == brand_id)
+    @staticmethod
+    async def list_independence_data(db: AsyncSession, brand_id: int) -> List[SrcBrandSimilarwebDataORM]:
+        stmt = select(SrcBrandSimilarwebDataORM).where(SrcBrandSimilarwebDataORM.brand_id == brand_id)
         res = await db.execute(stmt)
         return list(res.scalars().all())

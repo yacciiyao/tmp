@@ -1,28 +1,23 @@
 # -*- coding: utf-8 -*-
-# @File: image_ocr_parser.py
+# @Author: yaccii
+# @Description:
+
 from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Dict, List, Optional
+from typing import Dict, Any, List, Optional
 
+from infrastructures.vconfig import vconfig
+
+if vconfig.enable_image_ocr:
+    from paddleocr import PaddleOCR
+else:
+    PaddleOCR = None
 from infrastructures.parsing.parser_base import Parser, ParseError
-from infrastructures.vconfig import config
-
-# Optional dependency: only required when image OCR is enabled.
-if config.enable_image_ocr:
-    from paddleocr import PaddleOCR  # type: ignore
-else:  # pragma: no cover
-    PaddleOCR = None  # type: ignore
 
 
 class PaddleOcrParser(Parser):
-    """
-    PaddleOCR 3.x（PaddleX 推理管线）：
-      - ocr.predict(path) -> iterable of result objects
-      - result.json 属性/方法包含识别文本与坐标等信息
-    """
-
     def __init__(self, *, lang: str = "ch") -> None:
         self.lang = lang
         self._ocr = None  # lazy
@@ -42,11 +37,6 @@ class PaddleOcrParser(Parser):
 
         return {"text": text, "elements": elements, "source_modality": "image"}
 
-    def _to_local_path(self, storage_uri: str) -> str:
-        if storage_uri.startswith("local:"):
-            return storage_uri[len("local:") :]
-        raise ParseError(f"unsupported storage_uri: {storage_uri}", retryable=False)
-
     def _get_ocr(self):
         if self._ocr is not None:
             return self._ocr
@@ -54,7 +44,6 @@ class PaddleOcrParser(Parser):
         if PaddleOCR is None:
             raise ParseError("image OCR is disabled or paddleocr is not installed", retryable=False)
 
-        # PaddleOCR 3.x：尽量只传最少参数，避免 Unknown argument
         try:
             self._ocr = PaddleOCR(lang=self.lang)
         except Exception as e:
@@ -114,14 +103,8 @@ class PaddleOcrParser(Parser):
 
         return "\n".join(lines).strip(), elements
 
-    def _result_json(self, res) -> Optional[Dict[str, Any]]:
-        """
-        PaddleOCR 3.x 文档：Result 对象支持通过 `json` 属性获取预测结果（json 格式）。:contentReference[oaicite:1]{index=1}
-        不同版本可能表现为：
-          - res.json 是 dict
-          - res.json 是 str(JSON)
-          - res.json() 是 callable
-        """
+    @staticmethod
+    def _result_json(res) -> Optional[Dict[str, Any]]:
         if res is None:
             return None
 
@@ -129,11 +112,10 @@ class PaddleOcrParser(Parser):
         if j is None:
             return None
 
-        # callable: res.json()
         if callable(j):
             try:
                 out = j()
-            except Exception:
+            except:
                 return None
         else:
             out = j
@@ -148,7 +130,7 @@ class PaddleOcrParser(Parser):
             try:
                 parsed = json.loads(s)
                 return parsed if isinstance(parsed, dict) else None
-            except Exception:
+            except:
                 return None
 
         return None

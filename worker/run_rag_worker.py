@@ -1,19 +1,20 @@
 # -*- coding: utf-8 -*-
+# @Author: yaccii
+# @Description:
+
 from __future__ import annotations
 
 import asyncio
-import logging
-
-from infrastructures.vconfig import config
-from infrastructures.vlogger import init_logging
 
 from infrastructures.db.orm.orm_base import AsyncSessionFactory, init_db
 from infrastructures.db.repository.rag_repository import RagRepository
-from infrastructures.parsing.local_parser import LocalParser
-from infrastructures.parsing.chunker import SimpleChunker
 from infrastructures.embedding.dummy_embedder import DummyEmbedder
 from infrastructures.index.es_index import ESIndex
 from infrastructures.index.milvus_index import MilvusIndex
+from infrastructures.parsing.chunker import Chunker
+from infrastructures.parsing.local_parser import LocalParser
+from infrastructures.vconfig import vconfig
+from infrastructures.vlogger import vlogger
 from services.rag.ingest_pipeline import IngestPipeline
 from worker.rag_worker import RagWorker
 
@@ -34,23 +35,19 @@ async def _ensure_default_space(repo: RagRepository) -> None:
 
 
 async def main() -> None:
-    init_logging(level=config.log_level)
-    logger = logging.getLogger("app")
-
     await init_db()
-    logger.info("worker database schema ensured")
+    vlogger.info("worker database schema ensured")
 
     repo = RagRepository()
     await _ensure_default_space(repo)
-    logger.info("default space ensured")
+    vlogger.info("default space ensured")
 
     parser = LocalParser()
 
-    # Keep it simple for demo: fixed chunking parameters.
-    chunker = SimpleChunker(max_chars=800, overlap=80)
+    chunker = Chunker(max_chars=800, overlap=80)
 
-    embedder = DummyEmbedder(dim=int(config.embedding_dim))
-    logger.info("embedder=%s dim=%s", embedder.__class__.__name__, int(config.embedding_dim))
+    embedder = DummyEmbedder(dim=int(vconfig.embedding_dim))
+    vlogger.info("embedder=%s dim=%s", embedder.__class__.__name__, int(vconfig.embedding_dim))
 
     es_index = ESIndex()
     milvus_index = MilvusIndex()
@@ -71,10 +68,10 @@ async def main() -> None:
         pipeline=pipeline,
         worker_id="rag-worker-1",
         lease_seconds=60,
-        idle_sleep=float(config.worker_poll_interval),
+        idle_sleep=float(vconfig.worker_poll_interval),
     )
 
-    logger.info("rag worker started worker_id=%s", worker.worker_id)
+    vlogger.info("rag worker started worker_id=%s", worker.worker_id)
     await worker.run_forever()
 
 

@@ -17,15 +17,15 @@ class AmazonReportGenerator:
         self.repo = AmazonRepository()
 
     async def build_market_report(
-        self,
-        db: AsyncSession,
-        *,
-        crawl_batch_no: int,
-        site: str,
-        keyword: Optional[str],
-        asin: Optional[str],
-        category: Optional[str],
-        top_n: int,
+            self,
+            db: AsyncSession,
+            *,
+            crawl_batch_no: int,
+            site: str,
+            keyword: Optional[str],
+            asin: Optional[str],
+            category: Optional[str],
+            top_n: int,
     ) -> Dict[str, Any]:
         snapshots = await self.repo.list_snapshots(db, crawl_batch_no=crawl_batch_no, site=site)
         reviews = await self.repo.list_reviews(db, crawl_batch_no=crawl_batch_no, site=site)
@@ -92,7 +92,8 @@ class AmazonReportGenerator:
             )
         return cards
 
-    def _extract_review_themes(self, reviews: List[Any]) -> List[Dict[str, Any]]:
+    @staticmethod
+    def _extract_review_themes(reviews: List[Any]) -> List[Dict[str, Any]]:
         # 简单词频：用于离线验证与可解释展示（不依赖额外NLP库）
         text = " ".join([(r.title or "") + " " + (r.content or "") for r in reviews])
         tokens = [t.strip().lower() for t in text.replace("\n", " ").split(" ") if t.strip()]
@@ -101,7 +102,8 @@ class AmazonReportGenerator:
         top = Counter(tokens).most_common(12)
         return [{"token": k, "count": int(v)} for k, v in top]
 
-    def _build_keyword_signals(self, metrics: List[Any]) -> Dict[str, Any]:
+    @staticmethod
+    def _build_keyword_signals(metrics: List[Any]) -> Dict[str, Any]:
         if not metrics:
             return {"keywords": [], "summary": {"count": 0}}
 

@@ -6,10 +6,10 @@ from __future__ import annotations
 
 import hashlib
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple
 
 
-class SimpleChunker:
+class Chunker:
     def __init__(self, *, max_chars: int = 800, overlap: int = 80) -> None:
         self.max_chars = int(max_chars)
         self.overlap = int(overlap)
@@ -22,11 +22,6 @@ class SimpleChunker:
             kb_space: str,
             index_version: int,
     ) -> List[Dict[str, Any]]:
-        """
-        返回 List[chunk_dict]，字段对齐 domains.rag_domain.Chunk（不包含 created_at）：
-          chunk_id, document_id, kb_space, index_version, chunk_index,
-          modality, locator, content, content_hash
-        """
         modality = self._normalize_modality(str(parsed.get("source_modality") or "text"))
 
         segs = self._build_segments(
@@ -43,9 +38,9 @@ class SimpleChunker:
         buf_text_parts: List[str] = []
         buf_locs: List[Dict[str, Any]] = []
         buf_start_char: Optional[int] = None
-        global_char = 0  # 逻辑字符偏移（用于 char_start/char_end）
+        global_char = 0
 
-        def flush_chunk(chunk_index: int) -> None:
+        def flush_chunk(c_index: int) -> None:
             nonlocal buf_text_parts, buf_locs, buf_start_char
 
             content = "\n".join([p for p in buf_text_parts if p]).strip()
@@ -60,7 +55,7 @@ class SimpleChunker:
 
             locator = self._merge_locator(buf_locs, char_start=char_start, char_end=char_end)
 
-            chunk_id = self._sha1_hex(f"{int(document_id)}:{int(index_version)}:{int(chunk_index)}")
+            chunk_id = self._sha1_hex(f"{int(document_id)}:{int(index_version)}:{int(c_index)}")
             content_hash = self._sha256_hex(content.encode("utf-8"))
             token_count = self._estimate_token_count(content)
 
@@ -70,7 +65,7 @@ class SimpleChunker:
                     "document_id": int(document_id),
                     "kb_space": str(kb_space),
                     "index_version": int(index_version),
-                    "chunk_index": int(chunk_index),
+                    "chunk_index": int(c_index),
                     "modality": modality,
                     "locator": locator,
                     "content": content,
@@ -80,8 +75,7 @@ class SimpleChunker:
                 }
             )
 
-            # overlap：保留末尾 overlap 字符（简单实现）
-            if overlap > 0 and len(content) > overlap:
+            if 0 < overlap < len(content):
                 tail = content[-overlap:]
                 buf_text_parts = [tail]
                 buf_locs = [buf_locs[-1]] if buf_locs else []
@@ -92,7 +86,6 @@ class SimpleChunker:
                 buf_start_char = None
 
         chunk_index = 0
-
         for seg_text, seg_loc in segs:
             seg_text = (seg_text or "").strip()
             if not seg_text:
@@ -125,7 +118,8 @@ class SimpleChunker:
 
         return chunks
 
-    def _build_segments(self, *, elements: Any, fallback_text: str) -> List[Tuple[str, Dict[str, Any]]]:
+    @staticmethod
+    def _build_segments(*, elements: Any, fallback_text: str) -> List[Tuple[str, Dict[str, Any]]]:
         segs: List[Tuple[str, Dict[str, Any]]] = []
 
         if isinstance(elements, list) and elements:
@@ -144,7 +138,8 @@ class SimpleChunker:
             segs.append((t, {}))
         return segs
 
-    def _split_large(self, text: str, *, max_chars: int) -> List[str]:
+    @staticmethod
+    def _split_large(text: str, *, max_chars: int) -> List[str]:
         if len(text) <= max_chars:
             return [text]
         out: List[str] = []
@@ -155,7 +150,8 @@ class SimpleChunker:
             start = end
         return out
 
-    def _merge_locator(self, locs: List[Dict[str, Any]], *, char_start: int, char_end: int) -> Dict[str, Any]:
+    @staticmethod
+    def _merge_locator(locs: List[Dict[str, Any]], *, char_start: int, char_end: int) -> Dict[str, Any]:
         locator: Dict[str, Any] = {"char_start": int(char_start), "char_end": int(char_end)}
 
         pages = []
@@ -193,19 +189,23 @@ class SimpleChunker:
 
         return locator
 
-    def _normalize_modality(self, m: str) -> str:
+    @staticmethod
+    def _normalize_modality(m: str) -> str:
         m = (m or "text").strip().lower()
         if m in {"text", "image", "audio"}:
             return m
         return "text"
 
-    def _sha1_hex(self, s: str) -> str:
+    @staticmethod
+    def _sha1_hex(s: str) -> str:
         return hashlib.sha1(s.encode("utf-8")).hexdigest()
 
-    def _sha256_hex(self, b: bytes) -> str:
+    @staticmethod
+    def _sha256_hex(b: bytes) -> str:
         return hashlib.sha256(b).hexdigest()
 
-    def _estimate_token_count(self, text: str) -> int:
+    @staticmethod
+    def _estimate_token_count(text: str) -> int:
         """
         轻量 token 数估算（用于上下文预算与排序特征）
         - CJK 字符：按 1 计

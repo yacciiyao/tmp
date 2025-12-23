@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-# @File: ingest_pipeline.py
-
+# @Author: yaccii
+# @Description:
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List
 
@@ -12,9 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from domains.rag_domain import DocumentStatus, JobResultStatus, JobRunResult, JobStage, JobStatus
 from infrastructures.db.repository.rag_repository import RagRepository
 from infrastructures.parsing.parser_base import ParseError
-from infrastructures.vconfig import config
-
-logger = logging.getLogger("app")
+from infrastructures.vconfig import vconfig
+from infrastructures.vlogger import vlogger
 
 
 @dataclass
@@ -41,7 +39,6 @@ class IngestPipeline:
                     data={"stage": "load"},
                 )
 
-            # accept RUNNING because claim_next_job marks it RUNNING before calling pipeline
             if int(job.status) not in (int(JobStatus.PENDING), int(JobStatus.FAILED), int(JobStatus.RUNNING)):
                 return JobRunResult(
                     job_id=int(job.job_id),
@@ -52,7 +49,6 @@ class IngestPipeline:
                     data={"stage": "skip"},
                 )
 
-            # when already RUNNING, only proceed if lock owner matches (defensive)
             if int(job.status) == int(JobStatus.RUNNING):
                 locked_by = str(job.locked_by or "")
                 if locked_by and locked_by != str(worker_id):
@@ -124,7 +120,6 @@ class IngestPipeline:
                 if not chunks:
                     raise ValueError("chunker returned empty chunks")
 
-                # chunks table must always be persisted
                 await self.repo.replace_chunks_by_document_version(
                     db,
                     document_id=int(doc.document_id),
@@ -133,14 +128,13 @@ class IngestPipeline:
                 )
                 await db.commit()
 
-                # optional: milvus
-                if bool(config.milvus_enabled):
+                if bool(vconfig.milvus_enabled):
                     texts = [str(c.get("content") or "") for c in chunks]
                     vectors = await self.embedder.embed_documents(texts)
                     await self.milvus_index.upsert(chunks=chunks, vectors=vectors)
 
                 # optional: es
-                if bool(config.es_enabled):
+                if bool(vconfig.es_enabled):
                     await self.es_index.upsert(chunks=chunks)
 
                 # commit
@@ -198,7 +192,6 @@ class IngestPipeline:
                         data={"stage": "error", "retryable": True},
                     )
 
-                # non-retryable parse error: cancel so it won't be picked again
                 await self.repo.finish_job(
                     db,
                     job_id=int(job.job_id),
@@ -242,13 +235,7 @@ class IngestPipeline:
                 )
 
     async def cleanup_after_commit(self, *, kb_space: str, document_id: int, keep_index_version: int) -> None:
-        """
-        Best-effort cleanup:
-        - MUST NOT crash worker loop.
-        - Only run cleanup when backend is enabled AND minimally configured.
-        """
-        # ES cleanup
-        if bool(config.es_enabled) and str(getattr(config, "es_url", "") or "").strip():
+        if bool(vconfig.es_enabled) and str(getattr(vconfig, "es_url", "") or "").strip():
             try:
                 await self.es_index.delete_by_document(
                     kb_space=str(kb_space),
@@ -256,7 +243,7 @@ class IngestPipeline:
                     keep_index_version=int(keep_index_version),
                 )
             except Exception as e:
-                logger.warning(
+                vlogger.warning(
                     "cleanup es failed",
                     extra={
                         "kb_space": str(kb_space),
@@ -267,7 +254,7 @@ class IngestPipeline:
                 )
 
         # Milvus cleanup
-        if bool(config.milvus_enabled) and str(getattr(config, "milvus_uri", "") or "").strip():
+        if bool(vconfig.milvus_enabled) and str(getattr(vconfig, "milvus_uri", "") or "").strip():
             try:
                 await self.milvus_index.delete_by_document(
                     kb_space=str(kb_space),
@@ -275,7 +262,7 @@ class IngestPipeline:
                     keep_index_version=int(keep_index_version),
                 )
             except Exception as e:
-                logger.warning(
+                vlogger.warning(
                     "cleanup milvus failed",
                     extra={
                         "kb_space": str(kb_space),

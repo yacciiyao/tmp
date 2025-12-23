@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from infrastructures.db.orm.analysis_job_orm import AnalysisJobORM
+from infrastructures.db.orm.analysis_job_orm import OpsAnalysisJobsORM
 from infrastructures.db.repository.analysis_job_repository import AnalysisJobRepository
 
 
@@ -17,15 +17,15 @@ class AnalysisJobService:
         self.repo = AnalysisJobRepository()
 
     async def create_job(
-        self,
-        db: AsyncSession,
-        *,
-        job_type: int,
-        payload: Dict[str, Any],
-        created_by: int,
-        spider_task_id: Optional[int] = None,
-        trace: Optional[Dict[str, Any]] = None,
-    ) -> AnalysisJobORM:
+            self,
+            db: AsyncSession,
+            *,
+            job_type: int,
+            payload: Dict[str, Any],
+            created_by: int,
+            spider_task_id: Optional[int] = None,
+            trace: Optional[Dict[str, Any]] = None,
+    ) -> OpsAnalysisJobsORM:
         return await self.repo.create(
             db,
             job_type=job_type,
@@ -35,19 +35,19 @@ class AnalysisJobService:
             trace=trace,
         )
 
-    async def get_job(self, db: AsyncSession, *, job_id: int) -> Optional[AnalysisJobORM]:
+    async def get_job(self, db: AsyncSession, *, job_id: int) -> Optional[OpsAnalysisJobsORM]:
         return await self.repo.get_by_job_id(db, job_id=job_id)
 
     async def list_jobs(
-        self,
-        db: AsyncSession,
-        *,
-        created_by: Optional[int] = None,
-        job_type: Optional[int] = None,
-        status: Optional[int] = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> List[AnalysisJobORM]:
+            self,
+            db: AsyncSession,
+            *,
+            created_by: Optional[int] = None,
+            job_type: Optional[int] = None,
+            status: Optional[int] = None,
+            limit: int = 50,
+            offset: int = 0,
+    ) -> List[OpsAnalysisJobsORM]:
         return await self.repo.list_jobs(
             db,
             created_by=created_by,
@@ -64,13 +64,13 @@ class AnalysisJobService:
         await self.repo.mark_ready_by_spider_task_id(db, spider_task_id=spider_task_id)
 
     async def mark_failed_by_spider_task_id(
-        self, db: AsyncSession, *, spider_task_id: int, error_code: str, error_message: str
+            self, db: AsyncSession, *, spider_task_id: int, error_code: str, error_message: str
     ) -> None:
         await self.repo.mark_failed_by_spider_task_id(
             db, spider_task_id=spider_task_id, error_code=error_code, error_message=error_message
         )
 
-    async def claim_one_ready(self, db: AsyncSession) -> Optional[AnalysisJobORM]:
+    async def claim_one_ready(self, db: AsyncSession) -> Optional[OpsAnalysisJobsORM]:
         return await self.repo.claim_one_ready(db)
 
     async def mark_done(self, db: AsyncSession, *, job_id: int, result: Dict[str, Any]) -> None:

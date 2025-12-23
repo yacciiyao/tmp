@@ -1,40 +1,37 @@
 # -*- coding: utf-8 -*-
+# @Author: yaccii
+# @Description:
+
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple
 
-from pymilvus import Collection, CollectionSchema, DataType, FieldSchema, connections, utility
+from pymilvus import connections, Collection, FieldSchema, DataType, CollectionSchema
+from pymilvus.orm import utility
 
-from infrastructures.vconfig import config
+from infrastructures.vconfig import vconfig
 
 
 class MilvusIndex:
-    """Milvus/Zilliz vector index.
-
-    Used by:
-    - ingest pipeline: upsert chunk vectors
-    - search service: vector search over chunks
-    """
-
     def __init__(self) -> None:
         self._connected = False
 
     def _ensure_connected(self) -> None:
-        if self._connected or not config.milvus_enabled:
+        if self._connected or not vconfig.milvus_enabled:
             return
 
         connections.connect(
             alias="default",
-            uri=str(config.milvus_uri),
-            token=(str(config.milvus_token).strip() or None),
-            db_name=str(config.milvus_database),
-            secure=bool(config.milvus_secure),
+            uri=str(vconfig.milvus_uri),
+            token=(str(vconfig.milvus_token).strip() or None),
+            db_name=str(vconfig.milvus_database),
+            secure=bool(vconfig.milvus_secure),
         )
         self._connected = True
 
     def _collection_name(self, kb_space: str) -> str:
-        prefix = config.milvus_collection_prefix.strip() or "rag"
+        prefix = vconfig.milvus_collection_prefix.strip() or "rag"
         return f"{prefix}_{kb_space}"
 
     def _ensure_collection(self, kb_space: str, dim: int) -> Collection:
@@ -53,16 +50,16 @@ class MilvusIndex:
             schema = CollectionSchema(fields, description="RAG chunk vectors")
             col = Collection(name=name, schema=schema)
 
-            raw = config.milvus_index_params.strip()
+            raw = vconfig.milvus_index_params.strip()
             if raw:
                 index_params: Dict[str, Any] = json.loads(raw)
             else:
                 index_params = {
-                    "index_type": str(config.milvus_index_type),
-                    "metric_type": str(config.milvus_metric_type),
+                    "index_type": str(vconfig.milvus_index_type),
+                    "metric_type": str(vconfig.milvus_metric_type),
                     "params": {
-                        "M": int(config.milvus_hnsw_m),
-                        "efConstruction": int(config.milvus_hnsw_ef_construction),
+                        "M": int(vconfig.milvus_hnsw_m),
+                        "efConstruction": int(vconfig.milvus_hnsw_ef_construction),
                     },
                 }
 
@@ -75,12 +72,12 @@ class MilvusIndex:
         return col
 
     async def upsert(self, *, chunks: List[Dict[str, Any]], vectors: List[List[float]]) -> None:
-        if not config.milvus_enabled:
+        if not vconfig.milvus_enabled:
             return
         if len(chunks) != len(vectors):
             raise ValueError(f"chunks({len(chunks)}) != vectors({len(vectors)})")
 
-        dim = int(config.embedding_dim)
+        dim = int(vconfig.embedding_dim)
         if dim <= 0:
             raise ValueError("invalid embedding dim")
 
@@ -99,16 +96,16 @@ class MilvusIndex:
         col.flush()
 
     async def delete_by_document(
-        self,
-        *,
-        kb_space: str,
-        document_id: int,
-        keep_index_version: Optional[int] = None,
+            self,
+            *,
+            kb_space: str,
+            document_id: int,
+            keep_index_version: Optional[int] = None,
     ) -> int:
-        if not config.milvus_enabled:
+        if not vconfig.milvus_enabled:
             return 0
 
-        dim = int(config.embedding_dim)
+        dim = int(vconfig.embedding_dim)
         col = self._ensure_collection(kb_space=str(kb_space), dim=dim)
 
         expr = f"document_id == {int(document_id)}"
@@ -120,17 +117,17 @@ class MilvusIndex:
         return int(res.delete_count or 0)
 
     async def search(
-        self,
-        *,
-        kb_space: str,
-        query_vector: List[float],
-        top_k: int,
-        document_ids: Optional[List[int]] = None,
+            self,
+            *,
+            kb_space: str,
+            query_vector: List[float],
+            top_k: int,
+            document_ids: Optional[List[int]] = None,
     ) -> List[Tuple[str, float]]:
-        if not config.milvus_enabled:
+        if not vconfig.milvus_enabled:
             return []
 
-        dim = int(config.embedding_dim)
+        dim = int(vconfig.embedding_dim)
         col = self._ensure_collection(kb_space=str(kb_space), dim=dim)
 
         expr = None
@@ -139,10 +136,10 @@ class MilvusIndex:
             expr = f"document_id in [{ids}]"
 
         search_params = {
-            "metric_type": str(config.milvus_metric_type),
+            "metric_type": str(vconfig.milvus_metric_type),
             "params": {
-                "nprobe": int(config.milvus_search_nprobe),
-                "ef": int(config.milvus_search_ef),
+                "nprobe": int(vconfig.milvus_search_nprobe),
+                "ef": int(vconfig.milvus_search_ef),
             },
         }
 
