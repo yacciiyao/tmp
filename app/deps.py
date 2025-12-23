@@ -14,7 +14,7 @@ from infrastructures.db.orm.orm_deps import get_db
 from infrastructures.db.orm.user_orm import UserORM
 from services.auth_service import AuthService
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login", auto_error=False)
 
 
 async def get_current_user(

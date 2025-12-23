@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
-# @File: main.py
 # @Author: yaccii
-# @Time: 2025-12-14 19:52
-# @Description:
+# @Description: FastAPI 应用入口
 
 from __future__ import annotations
 
@@ -12,7 +10,9 @@ from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse, RedirectResponse
 
-from app.routers import auth_router
+from app.routers import auth_router, spider_router
+from app.routers import amazon_router
+from app.routers import analysis_router
 from app.routers import rag_router
 from domains.error_domain import AppError
 from infrastructures.db.orm.orm_base import init_db, AsyncSessionFactory
@@ -24,7 +24,6 @@ from infrastructures.db.repository.rag_repository import RagRepository
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-
     init_logging(config.log_level)
 
     # 1) 建表
@@ -43,7 +42,8 @@ async def lifespan(_app: FastAPI):
         async with db.begin():
             existing = await repo.get_space(db, kb_space="default")
             if existing is None:
-                await repo.create_space(db, kb_space="default", display_name="Default", description="default", enabled=1, status=1)
+                await repo.create_space(db, kb_space="default", display_name="Default", description="default",
+                                        enabled=1, status=1)
     logger.info("default space ensured")
 
     try:
@@ -93,13 +93,17 @@ def create_app() -> FastAPI:
     async def health_check():
         return {"status": "ok"}
 
-    api.include_router(auth_router.router)
-    api.include_router(rag_router.router)
+    app.include_router(auth_router.router)
+    app.include_router(rag_router.router)
+    app.include_router(amazon_router.router)
+    app.include_router(analysis_router.router)
+    app.include_router(spider_router.router)
     app.include_router(api)
 
     @app.get("/")
     async def index():
-        return RedirectResponse(url="/web/chat.html", status_code=302)
+        # 项目未默认打包 web/ 静态页面时，直接跳到接口文档。
+        return RedirectResponse(url="/api/docs", status_code=302)
 
     return app
 

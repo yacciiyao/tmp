@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-# @File: rag_service.py
+# @Author: yaccii
+# @Description: RAG 服务（space/document/job/chunk 的业务编排）
 
 from __future__ import annotations
 

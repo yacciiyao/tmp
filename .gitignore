@@ -3,3 +3,6 @@ data/
 .venv/
 .env
 models/
+/eval/
+/test.py
+/scripts/

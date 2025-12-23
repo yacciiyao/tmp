@@ -203,6 +203,22 @@ class RagRepository:
         res = await db.execute(stmt)
         return int(res.rowcount or 0)
 
+    async def update_document_filename(
+        self,
+        db: AsyncSession,
+        *,
+        document_id: int,
+        filename: str,
+    ) -> int:
+        stmt = (
+            update(DocumentORM)
+            .where(DocumentORM.document_id == int(document_id))
+            .values(filename=str(filename), updated_at=now_ts())
+        )
+        res = await db.execute(stmt)
+        return int(res.rowcount or 0)
+
+
     async def mark_document_deleted(
         self,
         db: AsyncSession,

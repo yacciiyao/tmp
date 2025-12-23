@@ -14,7 +14,6 @@ from starlette.responses import Response
 from infrastructures.vconfig import config
 
 
-# request-scoped correlation id (optional)
 _request_id_var: ContextVar[str] = ContextVar("request_id", default="-")
 
 
@@ -23,11 +22,6 @@ def get_request_id() -> str:
 
 
 def init_logging(level: str) -> None:
-    """Initialize Python logging.
-
-    Keep it boring: one formatter, one logger. If you need JSON logging later, add it later.
-    """
-
     valid = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"}
     lvl = level.upper().strip()
     if lvl not in valid:
@@ -58,6 +52,10 @@ def init_logging(level: str) -> None:
     logger.info("logging initialized level=%s", lvl)
 
 
+def get_logger(name: str) -> logging.Logger:
+    return logging.getLogger(name)
+
+
 class RequestContextMiddleware(BaseHTTPMiddleware):
     """Attach request_id and emit a single access log line per request."""
 
@@ -73,25 +71,29 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
         token = _request_id_var.set(rid)
         start = time.perf_counter()
+        response: Response | None = None
         try:
             response = await call_next(request)
+            return response
         finally:
             elapsed_ms = int((time.perf_counter() - start) * 1000)
             _request_id_var.reset(token)
 
-        # mirror back if we have a real rid
-        if rid != "-":
-            response.headers[header_name] = rid
+            # call_next 抛异常时 response 为空，这里必须做保护，避免覆盖原始异常
+            if response is not None:
+                # mirror back if we have a real rid
+                if rid != "-":
+                    response.headers[header_name] = rid
 
-        if config.log_requests:
-            logger.info(
-                "http %s %s -> %s %sms",
-                request.method,
-                request.url.path,
-                getattr(response, "status_code", "?"),
-                elapsed_ms,
-            )
-        return response
+            if config.log_requests:
+                status = getattr(response, "status_code", "EXC")
+                logger.info(
+                    "http %s %s -> %s %sms",
+                    request.method,
+                    request.url.path,
+                    status,
+                    elapsed_ms,
+                )
 
 
 logger = logging.getLogger("app")

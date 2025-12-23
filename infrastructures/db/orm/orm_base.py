@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# @Author: yaccii
+# @Description: ORM基类与数据库初始化
 from __future__ import annotations
 
 import time
@@ -60,6 +62,11 @@ AsyncSessionFactory = _LazyAsyncSessionFactory()
 async def init_db() -> None:
     from infrastructures.db.orm import user_orm  # noqa: F401
     from infrastructures.db.orm import rag_orm  # noqa: F401
+    from infrastructures.db.orm import analysis_job_orm  # noqa: F401
+    from infrastructures.db.orm import spider_orm  # noqa: F401
+    from infrastructures.db.orm import amazon_orm  # noqa: F401
+    from infrastructures.db.orm import brand_orm  # noqa: F401
+    from infrastructures.db.orm import crowdfunding_orm  # noqa: F401
 
     engine, _ = _ensure_db_engine()
     async with engine.begin() as conn:

@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# @File: user_repository.py
 # @Author: yaccii
 # @Description: 用户数据访问层（只做 DB 读写封装，不做业务逻辑）
 

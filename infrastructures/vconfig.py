@@ -101,6 +101,12 @@ class VConfig(BaseSettings):
     whisper_compute_type: str = Field("int8", validation_alias="WHISPER_COMPUTE_TYPE")
     whisper_language: Optional[str] = Field(None, validation_alias="WHISPER_LANGUAGE")
 
+    # ---------- Spider ----------
+    spider_redis_url: str = Field("redis://localhost:6379/0", validation_alias="SPIDER_REDIS_URL")
+    spider_redis_list_key: str = Field("spider:tasks", validation_alias="SPIDER_REDIS_LIST_KEY")
+    spider_redis_timeout_seconds: float = Field(5.0, validation_alias="SPIDER_REDIS_TIMEOUT_SECONDS", gt=0)
+
+
     @field_validator("whisper_language", mode="before")
     @classmethod
     def _normalize_whisper_language(cls, v):

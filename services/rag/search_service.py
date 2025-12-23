@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+# @Author: yaccii
+# @Description: RAG 检索服务（BM25/向量/混合召回 + 结果融合）
 from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
@@ -6,7 +8,7 @@ from typing import Any, Dict, List, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from domains.error_domain import AppError
-from domains.rag_domain import SearchRequest, SearchResponse
+from domains.rag_domain import SearchRequest, SearchResponse, SearchHit
 from infrastructures.db.repository.rag_repository import RagRepository
 from infrastructures.vconfig import config
 
@@ -18,13 +20,19 @@ class SearchService:
         self.milvus_index = milvus_index
         self.es_index = es_index
 
-    def _backend(self) -> str:
-        return config.index_backend.strip().lower()
+    @staticmethod
+    def _backend() -> str:
+        backend = (config.index_backend or "").strip().lower() or "hybrid"
+        if backend not in {"vector", "bm25", "hybrid"}:
+            return "hybrid"
+        return backend
 
-    def _es_enabled(self) -> bool:
+    @staticmethod
+    def _es_enabled() -> bool:
         return bool(config.es_enabled)
 
-    def _milvus_enabled(self) -> bool:
+    @staticmethod
+    def _milvus_enabled() -> bool:
         return bool(config.milvus_enabled)
 
     async def search(self, db: AsyncSession, req: SearchRequest) -> SearchResponse:
@@ -34,6 +42,8 @@ class SearchService:
 
         kb_space = (req.kb_space or "default").strip() or "default"
         top_k = int(req.top_k or 10)
+        if top_k <= 0:
+            raise AppError(code="search.invalid_top_k", message="top_k must be > 0", http_status=400)
         backend = self._backend()
 
         es_ok = self._es_enabled()
@@ -52,13 +62,12 @@ class SearchService:
             elif not es_ok and not vec_ok:
                 raise AppError(code="search.no_index", message="Both Milvus and Elasticsearch are disabled", http_status=503)
 
-        qvec: List[float] = []
         vec_pairs: List[Tuple[str, float]] = []
         es_pairs: List[Tuple[str, float]] = []
 
         if backend in {"vector", "hybrid"}:
-            qvec = await self.embedder.embed_query(query)
-            vec_pairs = await self.milvus_index.search(kb_space=kb_space, query_vector=qvec, top_k=top_k * 5)
+            q_vec = await self.embedder.embed_query(query)
+            vec_pairs = await self.milvus_index.search(kb_space=kb_space, query_vector=q_vec, top_k=top_k * 5)
 
         if backend in {"bm25", "hybrid"}:
             es_hits = await self.es_index.search(kb_space=kb_space, query=query, top_k=top_k * 5)
@@ -77,7 +86,7 @@ class SearchService:
         chunks = await self.repo.get_searchable_chunks_by_ids(db, chunk_ids=chunk_ids, kb_space=kb_space)
         by_id = {str(c.chunk_id): c for c in chunks}
 
-        hits: List[Dict[str, Any]] = []
+        hits: List[SearchHit] = []
         seen_doc: Dict[int, int] = {}
 
         max_per_doc = int(config.search_max_per_doc)
@@ -89,16 +98,17 @@ class SearchService:
             if seen_doc.get(c.document_id, 0) >= max_per_doc:
                 continue
             seen_doc[c.document_id] = seen_doc.get(c.document_id, 0) + 1
+
             hits.append(
-                {
-                    "chunk_id": c.chunk_id,
-                    "document_id": c.document_id,
-                    "kb_space": c.kb_space,
-                    "index_version": c.index_version,
-                    "score": float(score),
-                    "content": c.content,
-                    "meta": c.locator,
-                }
+                SearchHit(
+                    chunk_id=str(c.chunk_id),
+                    document_id=int(c.document_id),
+                    kb_space=str(c.kb_space),
+                    index_version=int(c.index_version),
+                    content=str(c.content),
+                    meta=(dict(c.locator) if c.locator else None),
+                    score=float(score),
+                )
             )
             if len(hits) >= top_k:
                 break
@@ -106,26 +116,36 @@ class SearchService:
         return SearchResponse(kb_space=kb_space, query=query, top_k=top_k, backend=backend, hits=hits)
 
     @staticmethod
-    def _merge(vec_pairs: List[Tuple[str, float]], es_pairs: List[Tuple[str, float]], backend: str) -> List[Tuple[str, float]]:
+    def _merge(
+        vec_pairs: List[Tuple[str, float]],
+        es_pairs: List[Tuple[str, float]],
+        backend: str,
+    ) -> List[Tuple[str, float]]:
         # Keep behaviour stable:
-        # - vector: use vec score
-        # - bm25: use es score
-        # - hybrid: RRF fusion
+        # - vector: sort by score desc, tie-break by chunk_id
+        # - bm25: sort by score desc, tie-break by chunk_id
+        # - hybrid: RRF fusion, then sort by fused score desc, tie-break by chunk_id
         if backend == "vector":
-            return vec_pairs
+            pairs = [(str(cid), float(score)) for cid, score in vec_pairs]
+            pairs.sort(key=lambda x: (-x[1], x[0]))
+            return pairs
+
         if backend == "bm25":
-            return es_pairs
+            pairs = [(str(cid), float(score)) for cid, score in es_pairs]
+            pairs.sort(key=lambda x: (-x[1], x[0]))
+            return pairs
 
         # hybrid: Reciprocal Rank Fusion
-        def rrf(pairs: List[Tuple[str, float]], k: int = 60) -> Dict[str, float]:
+        def rrf(r_pairs: List[Tuple[str, float]], k: int = 60) -> Dict[str, float]:
             out: Dict[str, float] = {}
-            for rank, (cid, _) in enumerate(pairs, start=1):
-                out[str(cid)] = out.get(str(cid), 0.0) + 1.0 / (k + rank)
+            for rank, (cid, _) in enumerate(r_pairs, start=1):
+                cid = str(cid)
+                out[cid] = out.get(cid, 0.0) + 1.0 / (k + rank)
             return out
 
         a = rrf(vec_pairs)
         b = rrf(es_pairs)
         keys = set(a.keys()) | set(b.keys())
         fused = [(cid, a.get(cid, 0.0) + b.get(cid, 0.0)) for cid in keys]
-        fused.sort(key=lambda x: x[1], reverse=True)
+        fused.sort(key=lambda x: (-x[1], x[0]))
         return fused
