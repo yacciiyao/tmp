@@ -13,9 +13,9 @@ from domains.domain_base import DomainModel
 
 
 class AnalysisJobType(IntEnum):
-    AMAZON_MARKET_REPORT = 1
-    BRAND_REPORT = 2
-    CROWDFUNDING_REPORT = 3
+    AMAZON_OPERATION = 10
+    BRAND_REPORT = 20
+    CROWDFUNDING_REPORT = 30
 
 
 class AnalysisJobStatus(IntEnum):

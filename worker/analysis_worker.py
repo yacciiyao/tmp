@@ -5,24 +5,23 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Dict, Any
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from domains.analysis_job_domain import AnalysisJobType
+from domains.error_domain import AppError
 from infrastructures.db.orm.orm_base import AsyncSessionFactory
 from infrastructures.vlogger import vlogger
-from services.agents.amazon.amazon_report_generator import AmazonReportGenerator
+from services.amazon.amazon_workflow import AmazonWorkflow
 from services.jobs.analysis_job_service import AnalysisJobService
-from services.spider.spider_task_service import SpiderTaskService
 
 
 class AnalysisWorker:
     def __init__(self) -> None:
         self.session_factory = AsyncSessionFactory
         self.job_svc = AnalysisJobService()
-        self.spider_svc = SpiderTaskService()
-        self.amazon_gen = AmazonReportGenerator()
+        self.amazon_workflow = AmazonWorkflow()
 
     async def run_forever(self, *, poll_seconds: int = 3) -> None:
         while True:
@@ -34,12 +33,15 @@ class AnalysisWorker:
                     continue
 
                 try:
-                    await self._process_one(db, job_id=job.job_id)
+                    await self._process_one(db, job_id=int(job.job_id))
                     await db.commit()
+                except AppError as e:
+                    await self.job_svc.mark_failed(db, job_id=int(job.job_id), error_code=e.code, error_message=e.message)
+                    await db.commit()
+                    vlogger.exception("analysis job failed(app_error): job_id=%s code=%s", job.job_id, e.code)
                 except Exception as e:
-                    # 明确的业务兜底：避免worker整体退出
                     await self.job_svc.mark_failed(
-                        db, job_id=job.job_id, error_code="ANALYSIS_FAILED", error_message=str(e)
+                        db, job_id=int(job.job_id), error_code="ANALYSIS_FAILED", error_message=str(e)
                     )
                     await db.commit()
                     vlogger.exception("analysis job failed: job_id=%s", job.job_id)
@@ -49,51 +51,18 @@ class AnalysisWorker:
         if not job:
             return
 
-        if job.job_type == int(AnalysisJobType.AMAZON_MARKET_REPORT):
-            await self._process_amazon_market_report(db, job)
+        if int(job.job_type) == int(AnalysisJobType.AMAZON_OPERATION):
+            await self._process_amazon_operation(db, job)
             return
 
-        await self.job_svc.mark_failed(
-            db,
-            job_id=job.job_id,
-            error_code="NOT_IMPLEMENTED",
-            error_message=f"job_type={job.job_type} 暂未实现",
+        raise AppError(
+            code="job.not_implemented",
+            message=f"job_type={job.job_type} 暂未实现",
+            http_status=500,
+            details={"job_id": int(job.job_id)},
         )
 
-    async def _process_amazon_market_report(self, db: AsyncSession, job: Any) -> None:
-        if not job.spider_task_id:
-            await self.job_svc.mark_failed(
-                db, job_id=job.job_id, error_code="NO_SPIDER_TASK", error_message="缺少 spider_task_id"
-            )
-            return
-
-        spider_task = await self.spider_svc.get_task(db, task_id=job.spider_task_id)
-        if not spider_task or spider_task.status != 30:
-            await self.job_svc.mark_failed(
-                db,
-                job_id=job.job_id,
-                error_code="SPIDER_NOT_READY",
-                error_message="爬虫任务未就绪",
-            )
-            return
-
-        locator: Dict[str, Any] = spider_task.result_locator or {}
-        crawl_batch_no = locator.get("crawl_batch_no")
-        if not isinstance(crawl_batch_no, int):
-            await self.job_svc.mark_failed(
-                db, job_id=job.job_id, error_code="BAD_LOCATOR", error_message="result_locator 缺少 crawl_batch_no"
-            )
-            return
-
-        payload = job.payload or {}
-        report = await self.amazon_gen.build_market_report(
-            db,
-            crawl_batch_no=crawl_batch_no,
-            site=str(payload.get("site") or "us"),
-            keyword=payload.get("keyword"),
-            asin=payload.get("asin"),
-            category=payload.get("category"),
-            top_n=int(payload.get("top_n") or 10),
-        )
-        await self.job_svc.mark_done(db, job_id=job.job_id, result=report)
-        vlogger.info("analysis job done: job_id=%s crawl_batch_no=%s", job.job_id, crawl_batch_no)
+    async def _process_amazon_operation(self, db: AsyncSession, job: Any) -> None:
+        result = await self.amazon_workflow.run(db, job=job)
+        await self.job_svc.mark_done(db, job_id=int(job.job_id), result=result)
+        vlogger.info("analysis job done: job_id=%s", job.job_id)

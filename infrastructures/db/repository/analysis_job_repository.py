@@ -9,7 +9,9 @@ from typing import Dict, Any, Optional, List
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from domains.analysis_job_domain import AnalysisJobStatus
 from infrastructures.db.orm.analysis_job_orm import OpsAnalysisJobsORM
+from infrastructures.db.orm.orm_base import now_ts
 
 
 class AnalysisJobRepository:
@@ -25,7 +27,7 @@ class AnalysisJobRepository:
     ) -> OpsAnalysisJobsORM:
         row = OpsAnalysisJobsORM(
             job_type=job_type,
-            status=10,
+            status=AnalysisJobStatus.PENDING,
             payload=payload,
             created_by=created_by,
             spider_task_id=spider_task_id,
@@ -65,26 +67,30 @@ class AnalysisJobRepository:
 
     @staticmethod
     async def mark_ready(db: AsyncSession, *, job_id: int) -> None:
-        await db.execute(update(OpsAnalysisJobsORM).where(OpsAnalysisJobsORM.job_id == job_id).values(status=15))
+        await db.execute(
+            update(OpsAnalysisJobsORM).where(OpsAnalysisJobsORM.job_id == job_id).values(status=AnalysisJobStatus.READY, updated_at=now_ts())
+        )
 
     @staticmethod
     async def mark_ready_by_spider_task_id(db: AsyncSession, *, spider_task_id: int) -> None:
         stmt = (
             update(OpsAnalysisJobsORM)
             .where(OpsAnalysisJobsORM.spider_task_id == spider_task_id)
-            .where(OpsAnalysisJobsORM.status == 10)
-            .values(status=15)
+            .where(OpsAnalysisJobsORM.status == AnalysisJobStatus.PENDING)
+            .values(status=AnalysisJobStatus.READY, updated_at=now_ts())
         )
         await db.execute(stmt)
 
     @staticmethod
     async def mark_running(db: AsyncSession, *, job_id: int) -> None:
-        await db.execute(update(OpsAnalysisJobsORM).where(OpsAnalysisJobsORM.job_id == job_id).values(status=20))
+        await db.execute(
+            update(OpsAnalysisJobsORM).where(OpsAnalysisJobsORM.job_id == job_id).values(status=AnalysisJobStatus.RUNNING, updated_at=now_ts())
+        )
 
     @staticmethod
     async def claim_one_ready(db: AsyncSession) -> Optional[OpsAnalysisJobsORM]:
         res = await db.execute(
-            select(OpsAnalysisJobsORM).where(OpsAnalysisJobsORM.status == 15).order_by(
+            select(OpsAnalysisJobsORM).where(OpsAnalysisJobsORM.status == AnalysisJobStatus.READY).order_by(
                 OpsAnalysisJobsORM.job_id.asc()).limit(1)
         )
         job = res.scalar_one_or_none()
@@ -94,8 +100,8 @@ class AnalysisJobRepository:
         upd = (
             update(OpsAnalysisJobsORM)
             .where(OpsAnalysisJobsORM.job_id == job.job_id)
-            .where(OpsAnalysisJobsORM.status == 15)
-            .values(status=20)
+            .where(OpsAnalysisJobsORM.status == AnalysisJobStatus.READY)
+            .values(status=AnalysisJobStatus.RUNNING, updated_at=now_ts())
         )
         r = await db.execute(upd)
         if not r.rowcount:
@@ -109,7 +115,7 @@ class AnalysisJobRepository:
         await db.execute(
             update(OpsAnalysisJobsORM)
             .where(OpsAnalysisJobsORM.job_id == job_id)
-            .values(status=30, result=result, error_code="", error_message="")
+            .values(status=AnalysisJobStatus.SUCCEEDED, result=result, error_code="", error_message="", updated_at=now_ts())
         )
 
     @staticmethod
@@ -117,7 +123,7 @@ class AnalysisJobRepository:
         await db.execute(
             update(OpsAnalysisJobsORM)
             .where(OpsAnalysisJobsORM.job_id == job_id)
-            .values(status=40, error_code=error_code, error_message=error_message)
+            .values(status=AnalysisJobStatus.FAILED, error_code=error_code, error_message=error_message, updated_at=now_ts())
         )
 
     @staticmethod
@@ -127,7 +133,7 @@ class AnalysisJobRepository:
         stmt = (
             update(OpsAnalysisJobsORM)
             .where(OpsAnalysisJobsORM.spider_task_id == spider_task_id)
-            .where(OpsAnalysisJobsORM.status.in_([10, 15, 20]))
-            .values(status=40, error_code=error_code, error_message=error_message)
+            .where(OpsAnalysisJobsORM.status.in_([AnalysisJobStatus.PENDING, AnalysisJobStatus.READY, AnalysisJobStatus.RUNNING]))
+            .values(status=AnalysisJobStatus.FAILED, error_code=error_code, error_message=error_message, updated_at=now_ts())
         )
         await db.execute(stmt)

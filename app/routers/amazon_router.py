@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # @Author: yaccii
-# @Description: 亚马逊运营相关接口（任务提交）
+# @Description: Amazon 运营助手接口（仅提交任务，不等待爬虫/分析结果）
 
 from __future__ import annotations
 
@@ -9,19 +9,27 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.deps import get_current_user
-from domains.amazon_domain import AmazonMarketReportReq
+from domains.amazon_domain import (
+    AmazonCompetitorMatrixReq,
+    AmazonListingAuditReq,
+    AmazonMarketResearchReq,
+    AmazonOpportunityScanReq,
+    AmazonProductImprovementReq,
+    AmazonReviewVocReq,
+)
 from domains.analysis_job_domain import AnalysisJobVO
 from infrastructures.db.orm.analysis_job_orm import OpsAnalysisJobsORM
 from infrastructures.db.orm.orm_deps import get_db
 from infrastructures.db.orm.user_orm import MetaUsersORM
-from services.agents.amazon.market_report_service import AmazonMarketReportService
+from services.amazon.amazon_service import AmazonOperationService
+
 
 router = APIRouter(prefix="/amazon", tags=["amazon"])
 
-_svc = AmazonMarketReportService()
+_svc = AmazonOperationService()
 
 
-class AmazonMarketReportSubmitResp(BaseModel):
+class AmazonSubmitResp(BaseModel):
     job: AnalysisJobVO
 
 
@@ -42,11 +50,61 @@ def _job_to_vo(job: OpsAnalysisJobsORM) -> AnalysisJobVO:
     )
 
 
-@router.post("/market-report", response_model=AmazonMarketReportSubmitResp)
-async def submit_market_report(
-        req: AmazonMarketReportReq,
+@router.post("/opportunity-scan", response_model=AmazonSubmitResp)
+async def submit_opportunity_scan(
+        req: AmazonOpportunityScanReq,
         db: AsyncSession = Depends(get_db),
         current_user: MetaUsersORM = Depends(get_current_user),
-) -> AmazonMarketReportSubmitResp:
-    job, _spider_task = await _svc.submit_market_report(db, req, created_by=current_user.user_id)
-    return AmazonMarketReportSubmitResp(job=_job_to_vo(job))
+) -> AmazonSubmitResp:
+    job, _ = await _svc.submit(db, req, created_by=int(current_user.user_id))
+    return AmazonSubmitResp(job=_job_to_vo(job))
+
+
+@router.post("/market-research", response_model=AmazonSubmitResp)
+async def submit_market_research(
+        req: AmazonMarketResearchReq,
+        db: AsyncSession = Depends(get_db),
+        current_user: MetaUsersORM = Depends(get_current_user),
+) -> AmazonSubmitResp:
+    job, _ = await _svc.submit(db, req, created_by=int(current_user.user_id))
+    return AmazonSubmitResp(job=_job_to_vo(job))
+
+
+@router.post("/competitor-matrix", response_model=AmazonSubmitResp)
+async def submit_competitor_matrix(
+        req: AmazonCompetitorMatrixReq,
+        db: AsyncSession = Depends(get_db),
+        current_user: MetaUsersORM = Depends(get_current_user),
+) -> AmazonSubmitResp:
+    job, _ = await _svc.submit(db, req, created_by=int(current_user.user_id))
+    return AmazonSubmitResp(job=_job_to_vo(job))
+
+
+@router.post("/listing-audit", response_model=AmazonSubmitResp)
+async def submit_listing_audit(
+        req: AmazonListingAuditReq,
+        db: AsyncSession = Depends(get_db),
+        current_user: MetaUsersORM = Depends(get_current_user),
+) -> AmazonSubmitResp:
+    job, _ = await _svc.submit(db, req, created_by=int(current_user.user_id))
+    return AmazonSubmitResp(job=_job_to_vo(job))
+
+
+@router.post("/review-voc", response_model=AmazonSubmitResp)
+async def submit_review_voc(
+        req: AmazonReviewVocReq,
+        db: AsyncSession = Depends(get_db),
+        current_user: MetaUsersORM = Depends(get_current_user),
+) -> AmazonSubmitResp:
+    job, _ = await _svc.submit(db, req, created_by=int(current_user.user_id))
+    return AmazonSubmitResp(job=_job_to_vo(job))
+
+
+@router.post("/product-improvement", response_model=AmazonSubmitResp)
+async def submit_product_improvement(
+        req: AmazonProductImprovementReq,
+        db: AsyncSession = Depends(get_db),
+        current_user: MetaUsersORM = Depends(get_current_user),
+) -> AmazonSubmitResp:
+    job, _ = await _svc.submit(db, req, created_by=int(current_user.user_id))
+    return AmazonSubmitResp(job=_job_to_vo(job))

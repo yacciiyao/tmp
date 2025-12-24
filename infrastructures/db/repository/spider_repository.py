@@ -10,6 +10,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from domains.spider_domain import SpiderTaskStatus
+from infrastructures.db.orm.orm_base import now_ts
 from infrastructures.db.orm.spider_orm import OpsSpiderTasksORM
 
 
@@ -47,6 +48,7 @@ class SpiderRepository:
                 result_locator=result_locator,
                 error_code=None,
                 error_message=None,
+                updated_at=now_ts(),
             )
         )
         await db.execute(stmt)
@@ -56,7 +58,12 @@ class SpiderRepository:
         stmt = (
             update(OpsSpiderTasksORM)
             .where(OpsSpiderTasksORM.task_id == task_id)
-            .values(status=SpiderTaskStatus.FAILED.value, error_code=error_code, error_message=error_message)
+            .values(
+                status=SpiderTaskStatus.FAILED.value,
+                error_code=error_code,
+                error_message=error_message,
+                updated_at=now_ts(),
+            )
         )
         await db.execute(stmt)
 
@@ -74,7 +81,10 @@ class SpiderRepository:
 
     @staticmethod
     async def mark_enqueued(db: AsyncSession, task_id: int) -> None:
-        stmt = update(OpsSpiderTasksORM).where(OpsSpiderTasksORM.task_id == task_id).values(status=20)
+        stmt = (
+            update(OpsSpiderTasksORM)
+            .where(OpsSpiderTasksORM.task_id == task_id)
+            .values(status=SpiderTaskStatus.ENQUEUED.value, updated_at=now_ts())
+        )
         await db.execute(stmt)
 
-        await db.execute(stmt)

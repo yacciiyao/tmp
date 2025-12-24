@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # @Author: yaccii
-# @Description:
+# @Description: DomainModel 基类与公共工具（统一配置/时间戳）
 
 from __future__ import annotations
 
@@ -15,7 +15,8 @@ def now_ts() -> int:
 
 
 class DomainModel(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    # 允许字段名包含 model_*（如 model_name），避免 pydantic protected namespace 告警
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
     def to_dict(self, *, exclude_none: bool = False) -> Dict[str, Any]:
         return self.model_dump(mode="json", exclude_none=exclude_none)
