@@ -9,7 +9,7 @@ from fastapi import FastAPI, APIRouter, Request
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse, RedirectResponse
 
-from app.routers import auth_router, rag_router, amazon_router, analysis_router, spider_router
+from app.routers import auth_router, rag_router, voc_router
 from domains.error_domain import AppError
 from infrastructures.db.orm.orm_base import AsyncSessionFactory, init_db
 from infrastructures.db.repository.rag_repository import RagRepository
@@ -89,9 +89,7 @@ def create_app() -> FastAPI:
 
     app.include_router(auth_router.router)
     app.include_router(rag_router.router)
-    app.include_router(amazon_router.router)
-    app.include_router(analysis_router.router)
-    app.include_router(spider_router.router)
+    app.include_router(voc_router.router)
     app.include_router(api)
 
     @app.get("/")

@@ -33,9 +33,9 @@ def _get_search_service() -> SearchService:
 
 
 class RagCapability:
+    @staticmethod
     async def search(
-        self,
-        db: AsyncSession,
+            db: AsyncSession,
         *,
         kb_space: str,
         query: str,

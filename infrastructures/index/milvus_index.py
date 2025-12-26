@@ -30,7 +30,8 @@ class MilvusIndex:
         )
         self._connected = True
 
-    def _collection_name(self, kb_space: str) -> str:
+    @staticmethod
+    def _collection_name(kb_space: str) -> str:
         prefix = vconfig.milvus_collection_prefix.strip() or "rag"
         return f"{prefix}_{kb_space}"
 

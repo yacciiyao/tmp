@@ -74,18 +74,17 @@ class AuthService:
             raise AppError(code="auth.invalid_token", message="Invalid token subject", http_status=401) from exc
 
         user = await self._user_repo.get_by_id(db, user_id)
-        if not user or int(user.status) != 1:
+        if not user or user.status != 1:
             raise AppError(code="auth.user_not_found", message="User not found or inactive", http_status=401)
 
         return user
 
     async def authenticate(self, db: AsyncSession, username: str, password: str) -> Optional[MetaUsersORM]:
         user = await self._user_repo.get_by_username(db, username)
-        if not user or int(user.status) != 1:
+        if not user or user.status != 1:
             return None
 
-        pw_hash = cast(str, user.password_hash)
-        if not self.verify_password(password, pw_hash):
+        if not self.verify_password(password, str(user.password_hash)):
             return None
 
         return user

@@ -35,6 +35,10 @@ class VConfig(BaseSettings):
 
     cors_origins: str = Field(..., validation_alias="CORS_ORIGINS")
 
+    # Public base URL of this API service (used for spider callback URL building).
+    # Examples: http://127.0.0.1:8000  |  http://api:8000  |  https://api.example.com
+    public_base_url: str = Field("", validation_alias="PUBLIC_BASE_URL")
+
     # ---------- Upload ----------
     max_upload_mb: int = Field(..., validation_alias="MAX_UPLOAD_MB", ge=1)
 
@@ -105,9 +109,24 @@ class VConfig(BaseSettings):
     whisper_language: Optional[str] = Field(None, validation_alias="WHISPER_LANGUAGE")
 
     # ---------- Spider ----------
+    # Spider raw DB (read-only for veesees-deep). This project should never create/migrate spider tables.
+    spider_db_url: str = Field(..., validation_alias="SPIDER_DB_URL")
+
     spider_redis_url: str = Field("redis://localhost:6379/0", validation_alias="SPIDER_REDIS_URL")
     spider_redis_list_key: str = Field("spider:tasks", validation_alias="SPIDER_REDIS_LIST_KEY")
     spider_redis_timeout_seconds: float = Field(5.0, validation_alias="SPIDER_REDIS_TIMEOUT_SECONDS", gt=0)
+
+    # ---------- LLM (optional) ----------
+    enable_llm: bool = Field(True, validation_alias="ENABLE_LLM")
+    enable_vision: bool = Field(True, validation_alias="ENABLE_VISION")
+
+    openai_api_key: str = Field("", validation_alias="OPENAI_API_KEY")
+    openai_base_url: str = Field("https://api.openai.com", validation_alias="OPENAI_BASE_URL")
+    openai_timeout_seconds: int = Field(60, validation_alias="OPENAI_TIMEOUT_SECONDS", ge=1)
+
+    llm_registry_dir: str = Field(str(_project_root() / "configs"), validation_alias="LLM_REGISTRY_DIR")
+    llm_schema_dir: str = Field(str(_project_root() / "configs" / "schemas"), validation_alias="LLM_SCHEMA_DIR")
+    llm_schema_validate_mode: str = Field("lite", validation_alias="LLM_SCHEMA_VALIDATE_MODE")
 
     @field_validator("whisper_language", mode="before")
     @classmethod

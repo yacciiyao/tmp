@@ -60,14 +60,23 @@ class _LazyAsyncSessionFactory:
 AsyncSessionFactory = _LazyAsyncSessionFactory()
 
 
+def get_db_engine() -> AsyncEngine:
+    engine, _ = _ensure_db_engine()
+    return engine
+
+
+async def close_db_engine() -> None:
+    global _engine, _session_factory
+    if _engine is not None:
+        await _engine.dispose()
+    _engine = None
+    _session_factory = None
+
+
 async def init_db() -> None:
     from infrastructures.db.orm import user_orm  # noqa: F401
     from infrastructures.db.orm import rag_orm  # noqa: F401
-    from infrastructures.db.orm import analysis_job_orm  # noqa: F401
-    from infrastructures.db.orm import spider_orm  # noqa: F401
-    from infrastructures.db.orm import amazon_orm  # noqa: F401
-    from infrastructures.db.orm import brand_orm  # noqa: F401
-    from infrastructures.db.orm import crowdfunding_orm  # noqa: F401
+    from infrastructures.db.orm import voc_orm  # noqa: F401
 
     engine, _ = _ensure_db_engine()
     async with engine.begin() as conn:

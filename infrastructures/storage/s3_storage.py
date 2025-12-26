@@ -15,7 +15,7 @@ from typing import Optional, Tuple
 from starlette.datastructures import UploadFile
 
 from domains.error_domain import AppError
-from infrastructures.storage.storage_base import Storage, StoredFile
+from infrastructures.storage.storage_base import Storage, StoredFile, UploadFileLike
 from infrastructures.vconfig import vconfig
 
 _filename_re = re.compile(r"[^0-9A-Za-z._-]+")
@@ -122,7 +122,13 @@ class S3Storage(Storage):
         os.makedirs(cache_dir, exist_ok=True)
         return os.path.join(cache_dir, f"{h}{ext}")
 
-    async def save_upload(self, *, kb_space: str, uploader_user_id: int, upload_file: object) -> StoredFile:
+    async def save_upload(
+            self,
+            *,
+            kb_space: str,
+            uploader_user_id: int,
+            upload_file: UploadFileLike,
+    ) -> StoredFile:
         if not isinstance(upload_file, UploadFile):
             raise AppError(code="INVALID_UPLOAD", message="upload_file must be UploadFile")
 

@@ -43,7 +43,8 @@ class ESIndex:
         if not self._enabled:
             raise RuntimeError("Elasticsearch is disabled (ES_ENABLED=false)")
 
-    def _index_name(self, kb_space: str) -> str:
+    @staticmethod
+    def _index_name(kb_space: str) -> str:
         prefix = vconfig.es_index_prefix
         kb_space = (kb_space or "default").strip() or "default"
         return f"{prefix}{kb_space}"

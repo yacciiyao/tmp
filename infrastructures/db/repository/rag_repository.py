@@ -426,8 +426,8 @@ class RagRepository:
         if last_error is not None:
             values["last_error"] = last_error
         if clear_lock:
-            values["locked_by"] = None
-            values["locked_until"] = None
+            values["locked_by"] = 0
+            values["locked_until"] = 0
 
         stmt = update(OpsRagIngestJobsORM).where(OpsRagIngestJobsORM.job_id == int(job_id)).values(**values)
         res = await db.execute(stmt)
