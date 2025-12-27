@@ -1,123 +1,140 @@
 # -*- coding: utf-8 -*-
 # @Author: yaccii
-# @Description: VOC endpoints (v1): create review-analysis job + spider callback.
+# @Description: VOC router (MVP: reviews closed loop)
 
 from __future__ import annotations
 
+from typing import Annotated, Any, Dict, List, Optional
+
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.deps import get_current_admin
-from domains.error_domain import AppError
-from domains.voc_domain import (
-    VocCreateJobResponse,
-    VocCreateReviewAnalysisJobRequest,
-    VocJobResponse,
-    VocSpiderCallbackResponse,
-    VocSpiderCallbackRequest,
-)
-from domains.voc_review_domain import ReviewAnalysisReport
-
+from domains.voc_domain import VocJobStatus
 from infrastructures.db.orm.orm_deps import get_db
-from infrastructures.db.repository.voc_repository import VocRepository
-from services.voc.voc_service import VocService
+from infrastructures.db.spider_orm.spider_orm_deps import get_spider_db
+from services.voc.voc_job_service import VocJobService
 
 
 router = APIRouter(prefix="/voc", tags=["voc"])
 
 
-def _service() -> VocService:
-    # No global singleton; create per request.
-    return VocService(repo=VocRepository())
+class CreateReviewJobReq(BaseModel):
+    site_code: str = Field(..., description="Marketplace/site code, e.g. US")
+    asins: List[str] = Field(..., min_length=1)
+    review_days: int = Field(365, ge=1, le=3650)
+    run_now: bool = Field(True, description="Run pipeline synchronously for MVP")
 
 
-@router.post("/review-analysis/jobs", response_model=VocCreateJobResponse, summary="Create Review Analysis job")
-async def create_review_analysis_job(
-    body: VocCreateReviewAnalysisJobRequest,
-    db: AsyncSession = Depends(get_db),
-    admin=Depends(get_current_admin),
-) -> VocCreateJobResponse:
-    job_id, status, report_id = await _service().create_review_analysis_job(
-        db,
-        site_code=body.site_code,
-        asin=body.asin,
-        created_by_user_id=int(admin.user_id),
-    )
-    return VocCreateJobResponse(job_id=job_id, status=status, report_id=report_id)
+class JobResp(BaseModel):
+    job_id: int
+    status: int
 
 
-# Compatibility alias: user asked for /voc/job before.
-@router.post("/job", response_model=VocCreateJobResponse, summary="Create VOC job (v1: Review Analysis)")
-async def create_voc_job_alias(
-    body: VocCreateReviewAnalysisJobRequest,
-    db: AsyncSession = Depends(get_db),
-    admin=Depends(get_current_admin),
-) -> VocCreateJobResponse:
-    return await create_review_analysis_job(body=body, db=db, admin=admin)
-
-
-@router.get("/jobs/{job_id}", response_model=VocJobResponse, summary="Get VOC job")
-async def get_voc_job(
-    job_id: int,
-    db: AsyncSession = Depends(get_db),
-    _admin=Depends(get_current_admin),
-) -> VocJobResponse:
-    job = await _service().get_job(db, job_id=int(job_id))
-    if job is None:
-        raise AppError(code="voc.job_not_found", message="Job not found", http_status=404, details={"job_id": job_id})
-    return VocJobResponse.model_validate(job)
-
-
-@router.post("/spider/callback", response_model=VocSpiderCallbackResponse, summary="Spider callback")
-async def spider_callback(
-    body: VocSpiderCallbackRequest,
-    db: AsyncSession = Depends(get_db),
-) -> VocSpiderCallbackResponse:
-    updated_task_rows, updated_job_rows = await _service().handle_spider_callback(
-        db,
-        task_id=body.task_id,
-        status_text=body.status,
-        run_id=body.run_id,
-        error=body.error,
-        callback_token=body.callback_token,
-    )
-    return VocSpiderCallbackResponse(updated_task_rows=updated_task_rows, updated_job_rows=updated_job_rows)
-
-
-@router.get("/reports/{report_id}", response_model=ReviewAnalysisReport, summary="Get VOC report")
-async def get_voc_report(
-    report_id: int,
-    db: AsyncSession = Depends(get_db),
-    _admin=Depends(get_current_admin),
-) -> ReviewAnalysisReport:
-    report = await _service().get_report(db, report_id=int(report_id))
-    if report is None:
-        raise AppError(
-            code="voc.report_not_found",
-            message="Report not found",
-            http_status=404,
-            details={"report_id": int(report_id)},
-        )
-    return ReviewAnalysisReport.model_validate(report.payload_json)
-
-
-@router.get("/jobs/{job_id}/report", response_model=ReviewAnalysisReport, summary="Get VOC report by job")
-async def get_voc_report_by_job(
-    job_id: int,
-    db: AsyncSession = Depends(get_db),
-    _admin=Depends(get_current_admin),
-) -> ReviewAnalysisReport:
-    report = await _service().get_report_by_job(db, job_id=int(job_id))
-    if report is None:
-        raise AppError(
-            code="voc.report_not_found",
-            message="Report not found",
-            http_status=404,
-            details={"job_id": int(job_id)},
-        )
-    return ReviewAnalysisReport.model_validate(report.payload_json)
-
-
-@router.get("/health", summary="VOC health")
-async def voc_health():
+@router.get("/ping")
+async def ping():
     return {"status": "ok"}
+
+
+@router.post("/reviews/jobs", response_model=JobResp)
+async def create_review_job(
+    req: CreateReviewJobReq,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    spider_db: Annotated[AsyncSession, Depends(get_spider_db)],
+):
+    """Create a VOC review job.
+
+    MVP behavior:
+    - does NOT trigger spider crawling
+    - reads existing daily spider(results) data
+    - if run_now=true, runs pipeline in-request and persists outputs
+    """
+
+    svc = VocJobService()
+    job = await svc.create_or_reuse_review_job(db, site_code=req.site_code, asins=req.asins, review_days=req.review_days)
+
+    if req.run_now and job.status not in (int(VocJobStatus.DONE), int(VocJobStatus.FAILED)):
+        await svc.run_review_job_pipeline(db=db, spider_db=spider_db, job_id=job.job_id)
+        job = await svc.get_job(db, job_id=job.job_id)  # reload
+        assert job is not None
+
+    return JobResp(job_id=int(job.job_id), status=int(job.status))
+
+
+@router.get("/jobs/{job_id}")
+async def get_job(
+    job_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    svc = VocJobService()
+    job = await svc.get_job(db, job_id=int(job_id))
+    if job is None:
+        return {"error": {"code": "voc.job_not_found", "message": f"job_id={job_id} not found"}}
+    return {
+        "job_id": int(job.job_id),
+        "status": int(job.status),
+        "stage": job.stage,
+        "site_code": job.site_code,
+        "scope_type": job.scope_type,
+        "scope_value": job.scope_value,
+        "params": job.params_json,
+        "error_code": job.error_code,
+        "error_message": job.error_message,
+        "failed_stage": job.failed_stage,
+        "created_at": int(job.created_at),
+        "updated_at": int(job.updated_at),
+    }
+
+
+@router.get("/jobs/{job_id}/outputs")
+async def list_outputs(
+    job_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    svc = VocJobService()
+    outs = await svc.list_outputs(db, job_id=int(job_id))
+    return {
+        "job_id": int(job_id),
+        "items": [
+            {
+                "module_code": o.module_code,
+                "schema_version": int(o.schema_version),
+                "updated_at": int(o.updated_at),
+            }
+            for o in outs
+        ],
+    }
+
+
+@router.get("/jobs/{job_id}/outputs/{module_code}")
+async def get_output(
+    job_id: int,
+    module_code: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    svc = VocJobService()
+    out = await svc.get_output(db, job_id=int(job_id), module_code=module_code)
+    if out is None:
+        return {"error": {"code": "voc.output_not_found", "message": f"output not found: {module_code}"}}
+    return {
+        "job_id": int(job_id),
+        "module_code": out.module_code,
+        "schema_version": int(out.schema_version),
+        "payload": out.payload_json,
+        "updated_at": int(out.updated_at),
+    }
+
+
+@router.get("/jobs/{job_id}/evidence")
+async def list_evidence(
+    job_id: int,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    module_code: Optional[str] = None,
+):
+    svc = VocJobService()
+    items = await svc.list_evidence(db, job_id=int(job_id), module_code=module_code)
+    return {
+        "job_id": int(job_id),
+        "module_code": module_code,
+        "items": [i.model_dump() for i in items],
+    }

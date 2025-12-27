@@ -1,145 +1,104 @@
 # -*- coding: utf-8 -*-
 # @Author: yaccii
-# @Description: VOC tables (jobs / spider_tasks / reports)
+# @Description: VOC module ORM (service DB, NOT spider results DB)
 
 from __future__ import annotations
 
-from typing import Any
-
-from sqlalchemy import BigInteger
-from sqlalchemy import ForeignKey
-from sqlalchemy import Index
-from sqlalchemy import Integer
-from sqlalchemy import JSON
-from sqlalchemy import String
-from sqlalchemy import Text
-from sqlalchemy import UniqueConstraint
-from sqlalchemy.ext.mutable import MutableDict
-from sqlalchemy.orm import Mapped
-from sqlalchemy.orm import mapped_column
+from sqlalchemy import BigInteger, Integer, String, Text, UniqueConstraint, Index
+from sqlalchemy.dialects.mysql import JSON
+from sqlalchemy.orm import Mapped, mapped_column
 
 from infrastructures.db.orm.orm_base import Base, TimestampMixin
 
 
-class OpsVocJobsORM(TimestampMixin, Base):
-    """VOC 作业表（业务库 app_db）"""
+class MetaVocJobsORM(Base, TimestampMixin):
+    """VOC job table (one job per user request / batch).
 
-    __tablename__ = "ops_voc_jobs"
+    Stable columns:
+      - input_hash: dedup key for idempotency (caller+scope+params normalized hash)
+      - preferred_task_id/run_id: optional pointers to spider side (if job is triggered by AI crawl)
+    """
 
-    job_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="VOC作业ID(自增)")
-    job_type: Mapped[str] = mapped_column(String(32), nullable=False, comment="作业类型(review_analysis/...) ")
+    __tablename__ = "meta_voc_jobs"
 
-    site_code: Mapped[str] = mapped_column(String(16), nullable=False, comment="站点代码，如 US/DE/JP")
-    asin: Mapped[str | None] = mapped_column(String(32), nullable=True, comment="asin（review/listing 用）")
-    keyword: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="关键词（keyword/market 用）")
-    category: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="类目（market 用）")
+    job_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
 
-    status: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=10,
-        comment="状态：10待执行/20执行中/30成功/40失败/50取消",
-    )
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
 
-    try_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, comment="已重试次数")
-    max_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=3, comment="最大重试次数")
+    site_code: Mapped[str] = mapped_column(String(8), nullable=False)
+    scope_type: Mapped[str] = mapped_column(String(16), nullable=False, comment="asin/keyword/brand/url/...")
+    scope_value: Mapped[str] = mapped_column(String(256), nullable=False, comment="ASIN/keyword/...")
 
-    locked_by: Mapped[str | None] = mapped_column(String(64), nullable=True, comment="锁持有者(worker)")
-    locked_until: Mapped[int | None] = mapped_column(BigInteger, nullable=True, comment="锁过期时间戳(秒)")
+    params_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
-    report_id: Mapped[int | None] = mapped_column(Integer, nullable=True, comment="报告ID（ops_voc_reports.report_id）")
-    last_error: Mapped[str | None] = mapped_column(Text, nullable=True, comment="最近一次错误信息")
+    status: Mapped[int] = mapped_column(Integer, nullable=False, default=10, comment="VocJobStatus.*")
+    stage: Mapped[str | None] = mapped_column(String(32), nullable=True, comment="crawling/extracting/analyzing/persisting")
 
-    created_by_user_id: Mapped[int | None] = mapped_column(
-        Integer,
-        ForeignKey("meta_users.user_id"),
-        nullable=True,
-        comment="创建者 user_id（可空）",
-    )
+    preferred_task_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    preferred_run_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failed_stage: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     __table_args__ = (
-        Index("ix_voc_job_lock", "status", "locked_until"),
-        Index("ix_voc_job_type_site_asin", "job_type", "site_code", "asin"),
-        Index("ix_voc_job_type_site_keyword", "job_type", "site_code", "keyword"),
-        Index("ix_voc_job_type_site_category", "job_type", "site_code", "category"),
+        UniqueConstraint("input_hash", name="uk_voc_job_input_hash"),
+        Index("idx_voc_job_scope_time", "site_code", "scope_type", "scope_value", "created_at"),
+        Index("idx_voc_job_status_time", "status", "created_at"),
     )
 
 
-class OpsVocJobSpiderTasksORM(TimestampMixin, Base):
-    """VOC 爬虫任务表（业务库 app_db）"""
+class StgVocOutputsORM(Base, TimestampMixin):
+    """VOC module output snapshots.
 
-    __tablename__ = "ops_voc_job_spider_tasks"
+    This table is intentionally generic:
+      - each module writes its own payload_json
+      - payload_json must be forward compatible (fields are additive)
+    """
 
-    task_row_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="任务行ID(自增)")
-    job_id: Mapped[int] = mapped_column(Integer, ForeignKey("ops_voc_jobs.job_id"), nullable=False, comment="VOC作业ID")
+    __tablename__ = "stg_voc_outputs"
 
-    task_id: Mapped[str] = mapped_column(String(128), nullable=False, comment="爬虫任务ID（回调定位，唯一）")
+    output_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
 
-    # one-time callback token per task (store hash only)
-    callback_token_hash: Mapped[str] = mapped_column(
-        String(64),
-        nullable=False,
-        default="",
-        comment="callback token sha256 hex（每task唯一；不存明文）",
-    )
-    callback_token_created_at: Mapped[int] = mapped_column(
-        BigInteger,
-        nullable=False,
-        default=0,
-        comment="token生成时间(epoch秒)",
-    )
-    run_type: Mapped[str] = mapped_column(String(32), nullable=False, comment="爬虫运行类型，如 amazon_review")
+    job_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    module_code: Mapped[str] = mapped_column(String(64), nullable=False, comment="e.g. review.customer_profile")
 
-    site_code: Mapped[str] = mapped_column(String(16), nullable=False, comment="站点代码")
-    asin: Mapped[str | None] = mapped_column(String(32), nullable=True, comment="asin（review/listing）")
-    keyword: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="关键词（keyword/market）")
-    category: Mapped[str | None] = mapped_column(String(255), nullable=True, comment="类目（market）")
-
-    status: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=10,
-        comment="状态：10待爬/20爬取中/30就绪/40失败",
-    )
-    run_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, comment="results库的 run_id（SSOT绑定点）")
-    last_error: Mapped[str | None] = mapped_column(Text, nullable=True, comment="最近一次错误信息")
+    payload_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     __table_args__ = (
-        UniqueConstraint("task_id", name="uq_voc_task_id"),
-        Index("ix_voc_task_job", "job_id"),
-        Index("ix_voc_task_status", "status"),
+        UniqueConstraint("job_id", "module_code", name="uk_voc_output_job_module"),
+        Index("idx_voc_output_job", "job_id"),
     )
 
 
-class OpsVocReportsORM(TimestampMixin, Base):
-    """VOC 报告表（业务库 app_db）"""
+class StgVocEvidenceORM(Base, TimestampMixin):
+    """VOC evidence table.
 
-    __tablename__ = "ops_voc_reports"
+    Evidence is the bridge between a computed conclusion and raw spider(results) records.
 
-    report_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="报告ID(自增)")
-    job_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("ops_voc_jobs.job_id"),
-        nullable=False,
-        comment="VOC作业ID（一作业一报告）",
-    )
+    - source_type: review/listing/serp
+    - source_id: the primary key of the source table (e.g. review_id)
+    - snippet: short text shown in UI
+    - meta_json: extra structured info (stars/helpful_votes/asin/keyword/...)
+    """
 
-    report_type: Mapped[str] = mapped_column(String(32), nullable=False, comment="报告类型，如 review_analysis")
+    __tablename__ = "stg_voc_evidence"
 
-    payload_json: Mapped[dict[str, Any]] = mapped_column(
-        MutableDict.as_mutable(JSON),
-        nullable=False,
-        default=dict,
-        comment="报告payload(JSON)",
-    )
-    meta_json: Mapped[dict[str, Any]] = mapped_column(
-        MutableDict.as_mutable(JSON),
-        nullable=False,
-        default=dict,
-        comment="报告meta(JSON)",
-    )
+    evidence_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
+    job_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    module_code: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    kind: Mapped[str | None] = mapped_column(String(32), nullable=True, comment="pos/neg/neutral/...", default=None)
+
+    snippet: Mapped[str] = mapped_column(Text, nullable=False)
+    meta_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
     __table_args__ = (
-        UniqueConstraint("job_id", name="uq_voc_report_job"),
-        Index("ix_voc_report_type", "report_type"),
+        Index("idx_voc_evidence_job", "job_id"),
+        Index("idx_voc_evidence_job_module", "job_id", "module_code"),
+        Index("idx_voc_evidence_source", "source_type", "source_id"),
     )
