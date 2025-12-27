@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional, List
 
 from sqlalchemy import select, update
+from sqlalchemy import and_, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +19,67 @@ class VocRepository:
     # -----------------------------
     # Jobs
     # -----------------------------
+
+    @staticmethod
+    async def claim_next_job(
+        db: AsyncSession,
+        *,
+        worker_id: str = "voc-worker",
+        lease_seconds: int = 600,
+    ) -> Optional[MetaVocJobsORM]:
+        """Claim next queued (or stale) VOC job.
+
+        This implementation avoids schema changes by relying on row-level locking.
+
+        Queue contract (v1):
+            - API enqueues a job by setting status=EXTRACTING and stage='queued'.
+            - Worker claims with SELECT ... FOR UPDATE (SKIP LOCKED if supported).
+
+        Stale reclaim (best-effort):
+            - If a job is stuck in EXTRACTING/ANALYZING/PERSISTING and hasn't updated
+              for lease_seconds, it can be reclaimed.
+        """
+
+        now = now_ts()
+        stale_before = now - int(lease_seconds)
+
+        # Candidate statuses: queued or potentially stuck.
+        candidate_statuses = (30, 40, 50)  # EXTRACTING/ANALYZING/PERSISTING
+
+        base_cond = and_(
+            MetaVocJobsORM.status.in_(candidate_statuses),
+            or_(
+                MetaVocJobsORM.stage == "queued",
+                MetaVocJobsORM.updated_at <= stale_before,
+            ),
+        )
+
+        # Try SKIP LOCKED first (MySQL 8+/Postgres). Fallback to FOR UPDATE.
+        stmt = (
+            select(MetaVocJobsORM)
+            .where(base_cond)
+            .order_by(MetaVocJobsORM.created_at.asc())
+            .limit(1)
+        )
+        try:
+            stmt = stmt.with_for_update(skip_locked=True)
+            res = await db.execute(stmt)
+        except Exception:
+            res = await db.execute(stmt.with_for_update())
+
+        job = res.scalars().first()
+        if job is None:
+            return None
+
+        # Mark as claimed (still EXTRACTING stage=extracting). Pipeline will move stages.
+        await VocRepository.update_job_status(
+            db,
+            job_id=int(job.job_id),
+            status=30,
+            stage="extracting",
+        )
+
+        return job
 
     @staticmethod
     async def create_job(

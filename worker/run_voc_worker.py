@@ -1,16 +1,14 @@
 # -*- coding: utf-8 -*-
 # @Author: yaccii
-# @Description: Run VOC worker.
+# @Description: entrypoint for running voc worker process
 
 from __future__ import annotations
 
 import asyncio
 
 from infrastructures.db.orm.orm_base import AsyncSessionFactory, init_db
-from infrastructures.db.repository.voc_repository import VocRepository
 from infrastructures.vconfig import vconfig
 from infrastructures.vlogger import vlogger
-from services.voc.voc_pipeline import VocPipeline
 from worker.voc_worker import VocWorker
 
 
@@ -18,15 +16,10 @@ async def main() -> None:
     await init_db()
     vlogger.info("worker database schema ensured")
 
-    repo = VocRepository()
-    pipeline = VocPipeline(repo=repo)
-
     worker = VocWorker(
-        repo=repo,
         db_factory=AsyncSessionFactory,
-        pipeline=pipeline,
         worker_id="voc-worker-1",
-        lease_seconds=60,
+        lease_seconds=600,
         idle_sleep=float(vconfig.worker_poll_interval),
     )
 

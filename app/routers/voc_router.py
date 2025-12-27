@@ -23,7 +23,7 @@ class CreateReviewJobReq(BaseModel):
     site_code: str = Field(..., description="Marketplace/site code, e.g. US")
     asins: List[str] = Field(..., min_length=1)
     review_days: int = Field(365, ge=1, le=3650)
-    run_now: bool = Field(True, description="Run pipeline synchronously for MVP")
+    run_now: bool = Field(False, description="If true, run pipeline synchronously; otherwise enqueue for worker")
 
 
 class JobResp(BaseModel):
@@ -44,17 +44,24 @@ async def create_review_job(
 ):
     """Create a VOC review job.
 
-    MVP behavior:
+    Behavior:
     - does NOT trigger spider crawling
     - reads existing daily spider(results) data
-    - if run_now=true, runs pipeline in-request and persists outputs
+    - default: enqueue and let voc-worker run pipeline asynchronously
+    - if run_now=true: runs pipeline in-request (dev/testing)
     """
 
     svc = VocJobService()
     job = await svc.create_or_reuse_review_job(db, site_code=req.site_code, asins=req.asins, review_days=req.review_days)
 
     if req.run_now and job.status not in (int(VocJobStatus.DONE), int(VocJobStatus.FAILED)):
+        # synchronous (legacy MVP)
         await svc.run_review_job_pipeline(db=db, spider_db=spider_db, job_id=job.job_id)
+        job = await svc.get_job(db, job_id=job.job_id)  # reload
+        assert job is not None
+    elif not req.run_now and job.status not in (int(VocJobStatus.DONE), int(VocJobStatus.FAILED)):
+        # enqueue for worker (recommended)
+        await svc.enqueue_review_job(db, job_id=int(job.job_id))
         job = await svc.get_job(db, job_id=job.job_id)  # reload
         assert job is not None
 

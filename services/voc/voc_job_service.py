@@ -17,6 +17,11 @@ from domains.voc_output_domain import VocEvidenceItem
 from infrastructures.db.repository.spider_results_repository import SpiderResultsRepository
 from infrastructures.db.repository.voc_repository import VocRepository
 from services.voc.review_analyzer import ReviewOverviewAnalyzer
+from services.voc.review_customer_sentiment_analyzer import ReviewCustomerSentimentAnalyzer
+from services.voc.review_usage_scenario_analyzer import ReviewUsageScenarioAnalyzer
+from services.voc.review_buyers_motivation_analyzer import ReviewBuyersMotivationAnalyzer
+from services.voc.review_customer_expectations_analyzer import ReviewCustomerExpectationsAnalyzer
+from services.voc.review_rating_optimization_analyzer import ReviewRatingOptimizationAnalyzer
 
 
 def _stable_json(obj: Dict[str, Any]) -> str:
@@ -106,6 +111,33 @@ class VocJobService:
         await db.commit()
         return job
 
+    async def enqueue_review_job(self, db: AsyncSession, *, job_id: int) -> None:
+        """Mark an existing job as queued for VOC worker.
+
+        This does NOT run the pipeline. Worker will pick up jobs where:
+            status=EXTRACTING and stage='queued'
+        """
+
+        job = await VocRepository.get_job(db, job_id=int(job_id))
+        if job is None:
+            raise AppError(code="voc.job_not_found", message=f"job_id={job_id} not found", http_status=404)
+
+        if int(job.status) in (int(VocJobStatus.DONE), int(VocJobStatus.FAILED)):
+            return
+
+        # Only enqueue if not already running.
+        if int(job.status) == int(VocJobStatus.PENDING):
+            await VocRepository.update_job_status(
+                db,
+                job_id=int(job_id),
+                status=int(VocJobStatus.EXTRACTING),
+                stage="queued",
+                error_code=None,
+                error_message=None,
+                failed_stage=None,
+            )
+            await db.commit()
+
     # -----------------------------
     # Pipeline
     # -----------------------------
@@ -119,6 +151,36 @@ class VocJobService:
             return
 
         last_stage: str | None = None
+
+        async def _persist_module(*, module_code: str, output_payload: Dict[str, Any], schema_version: int, evidence_rows: List[Dict[str, Any]]):
+            # outputs
+            await VocRepository.upsert_output(
+                db,
+                job_id=int(job_id),
+                module_code=module_code,
+                payload_json=output_payload,
+                schema_version=int(schema_version),
+            )
+
+            # evidence: replace per module per run
+            await VocRepository.clear_evidence(db, job_id=int(job_id), module_code=module_code)
+            ev_items = []
+            for e in evidence_rows or []:
+                ev_items.append(
+                    {
+                        "source_type": e["source_type"],
+                        "source_id": e["source_id"],
+                        "kind": e.get("kind"),
+                        "snippet": e.get("snippet") or "",
+                        "meta_json": e.get("meta_json") or {},
+                    }
+                )
+            await VocRepository.insert_evidence_many(
+                db,
+                job_id=int(job_id),
+                module_code=module_code,
+                items=ev_items,
+            )
 
         try:
             # ---------- extracting ----------
@@ -151,37 +213,57 @@ class VocJobService:
             await db.commit()
 
             result = ReviewOverviewAnalyzer.compute(ds=ds, days_for_trend=30)
+            sentiment = ReviewCustomerSentimentAnalyzer.compute(ds=ds, top_k=12, max_evidence_per_topic=5)
+            usage = ReviewUsageScenarioAnalyzer.compute(ds=ds, top_k=12, max_evidence_per_scenario=6)
+            motivation = ReviewBuyersMotivationAnalyzer.compute(ds=ds, top_k=12, max_evidence_per_motivation=6)
+            expectations = ReviewCustomerExpectationsAnalyzer.compute(ds=ds, top_k=12, max_evidence_per_need=6)
+            rating_opt = ReviewRatingOptimizationAnalyzer.compute(ds=ds, top_k_points=25, max_evidence_per_topic=5)
 
             # ---------- persisting ----------
             last_stage = "persisting"
             await VocRepository.update_job_status(db, job_id=int(job_id), status=int(VocJobStatus.PERSISTING), stage=last_stage)
             await db.commit()
 
-            # outputs
-            await VocRepository.upsert_output(
-                db,
-                job_id=int(job_id),
+            await _persist_module(
                 module_code=result.output.module_code,
-                payload_json=result.output.model_dump(),
+                output_payload=result.output.model_dump(),
                 schema_version=int(result.output.schema_version),
+                evidence_rows=result.evidence_rows,
             )
 
-            # evidence (append-only for v1)
-            await VocRepository.clear_evidence(db, job_id=int(job_id), module_code=result.output.module_code)
-            ev_items = []
-            for e in result.evidence_rows:
-                ev_items.append({
-                    "source_type": e["source_type"],
-                    "source_id": e["source_id"],
-                    "kind": e.get("kind"),
-                    "snippet": e.get("snippet") or "",
-                    "meta_json": e.get("meta_json") or {},
-                })
-            await VocRepository.insert_evidence_many(
-                db,
-                job_id=int(job_id),
-                module_code=result.output.module_code,
-                items=ev_items,
+            await _persist_module(
+                module_code=sentiment.output.module_code,
+                output_payload=sentiment.output.model_dump(),
+                schema_version=int(sentiment.output.schema_version),
+                evidence_rows=sentiment.evidence_rows,
+            )
+
+            await _persist_module(
+                module_code=usage.output.module_code,
+                output_payload=usage.output.model_dump(),
+                schema_version=int(usage.output.schema_version),
+                evidence_rows=usage.evidence_rows,
+            )
+
+            await _persist_module(
+                module_code=motivation.output.module_code,
+                output_payload=motivation.output.model_dump(),
+                schema_version=int(motivation.output.schema_version),
+                evidence_rows=motivation.evidence_rows,
+            )
+
+            await _persist_module(
+                module_code=expectations.output.module_code,
+                output_payload=expectations.output.model_dump(),
+                schema_version=int(expectations.output.schema_version),
+                evidence_rows=expectations.evidence_rows,
+            )
+
+            await _persist_module(
+                module_code=rating_opt.output.module_code,
+                output_payload=rating_opt.output.model_dump(),
+                schema_version=int(rating_opt.output.schema_version),
+                evidence_rows=rating_opt.evidence_rows,
             )
 
             await db.commit()
@@ -194,6 +276,12 @@ class VocJobService:
         except AppError:
             raise
         except Exception as e:
+            # Important: any previous flush/execute error will put the session into a pending rollback state.
+            # Rollback first so we can safely persist FAILED status.
+            try:
+                await db.rollback()
+            except Exception:
+                pass
             await VocRepository.update_job_status(
                 db,
                 job_id=int(job_id),
