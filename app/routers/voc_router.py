@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 # @Author: yaccii
-# @Description: VOC router (MVP: reviews closed loop)
+# @Description: VOC router
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -23,6 +23,16 @@ class CreateReviewJobReq(BaseModel):
     site_code: str = Field(..., description="Marketplace/site code, e.g. US")
     asins: List[str] = Field(..., min_length=1)
     review_days: int = Field(365, ge=1, le=3650)
+    run_now: bool = Field(False, description="If true, run pipeline synchronously; otherwise enqueue for worker")
+
+
+class CreateVocJobReq(BaseModel):
+    site_code: str = Field(..., description="Marketplace/site code, e.g. US")
+    asins: List[str] = Field(default_factory=list, description="Target ASINs")
+    competitor_asins: List[str] = Field(default_factory=list, description="Competitor ASINs")
+    keywords: List[str] = Field(default_factory=list, description="Keywords for SERP analysis")
+    review_days: int = Field(365, ge=1, le=3650)
+    max_serp_page_num: Optional[int] = Field(2, ge=1, le=20, description="Max SERP page number to include")
     run_now: bool = Field(False, description="If true, run pipeline synchronously; otherwise enqueue for worker")
 
 
@@ -55,14 +65,52 @@ async def create_review_job(
     job = await svc.create_or_reuse_review_job(db, site_code=req.site_code, asins=req.asins, review_days=req.review_days)
 
     if req.run_now and job.status not in (int(VocJobStatus.DONE), int(VocJobStatus.FAILED)):
-        # synchronous (legacy MVP)
         await svc.run_review_job_pipeline(db=db, spider_db=spider_db, job_id=job.job_id)
         job = await svc.get_job(db, job_id=job.job_id)  # reload
         assert job is not None
     elif not req.run_now and job.status not in (int(VocJobStatus.DONE), int(VocJobStatus.FAILED)):
-        # enqueue for worker (recommended)
         await svc.enqueue_review_job(db, job_id=int(job.job_id))
         job = await svc.get_job(db, job_id=job.job_id)  # reload
+        assert job is not None
+
+    return JobResp(job_id=int(job.job_id), status=int(job.status))
+
+
+@router.post("/jobs", response_model=JobResp)
+async def create_voc_job(
+    req: CreateVocJobReq,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    spider_db: Annotated[AsyncSession, Depends(get_spider_db)],
+):
+    """Create a VOC bundle job.
+
+    Scope:
+    - reviews for target asins
+    - market.product_details for (target + competitor) asins
+    - keyword.keyword_details for keywords
+    - report.v1 aggregation
+
+    Default: enqueue and let worker run asynchronously.
+    """
+
+    svc = VocJobService()
+    job = await svc.create_or_reuse_voc_job(
+        db,
+        site_code=req.site_code,
+        asins=req.asins,
+        competitor_asins=req.competitor_asins,
+        keywords=req.keywords,
+        review_days=req.review_days,
+        max_serp_page_num=req.max_serp_page_num,
+    )
+
+    if req.run_now and job.status not in (int(VocJobStatus.DONE), int(VocJobStatus.FAILED)):
+        await svc.run_job_pipeline(db=db, spider_db=spider_db, job_id=int(job.job_id))
+        job = await svc.get_job(db, job_id=int(job.job_id))
+        assert job is not None
+    elif not req.run_now and job.status not in (int(VocJobStatus.DONE), int(VocJobStatus.FAILED)):
+        await svc.enqueue_job(db, job_id=int(job.job_id))
+        job = await svc.get_job(db, job_id=int(job.job_id))
         assert job is not None
 
     return JobResp(job_id=int(job.job_id), status=int(job.status))

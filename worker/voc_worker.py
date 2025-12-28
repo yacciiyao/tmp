@@ -57,7 +57,7 @@ class VocWorker:
             async with self.db_factory() as db:
                 async with SpiderAsyncSessionFactory() as spider_db:
                     try:
-                        await svc.run_review_job_pipeline(db=db, spider_db=spider_db, job_id=job_id)
+                        await svc.run_job_pipeline(db=db, spider_db=spider_db, job_id=job_id)
                     finally:
                         # Explicitly enforce read-only policy
                         await spider_db.rollback()
