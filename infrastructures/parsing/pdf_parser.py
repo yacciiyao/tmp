@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Dict, Any, List
 
 from pypdf import PdfReader
@@ -15,22 +16,27 @@ class PdfParser(Parser):
     async def parse(self, *, storage_uri: str, content_type: str) -> Dict[str, Any]:
         path = self._to_local_path(storage_uri)
 
-        try:
-            reader = PdfReader(path)
-        except Exception as e:
-            raise ParseError(f"pdf parse failed: {e}", retryable=False) from e
+        def _parse_sync(p: str) -> Dict[str, Any]:
+            try:
+                reader = PdfReader(p)
+            except Exception as e:
+                raise ParseError(f"pdf parse failed: {e}", retryable=False) from e
 
-        parts: List[str] = []
-        elements: List[Dict[str, Any]] = []
-        for i, page in enumerate(reader.pages):
-            page_text = (page.extract_text() or "").strip()
-            if not page_text:
-                continue
-            parts.append(page_text)
-            elements.append({"type": "text", "text": page_text, "locator": {"page": int(i + 1)}})
+            parts: List[str] = []
+            elements: List[Dict[str, Any]] = []
+            for i, page in enumerate(reader.pages):
+                page_text = (page.extract_text() or "").strip()
+                if not page_text:
+                    continue
+                parts.append(page_text)
+                elements.append({"type": "text", "text": page_text, "locator": {"page": int(i + 1)}})
 
-        text = "\n".join(parts).strip()
-        if not text:
-            raise ParseError("pdf has no extractable text", retryable=False)
+            text = "\n".join(parts).strip()
+            if not text:
+                raise ParseError("pdf has no extractable text", retryable=False)
 
-        return {"text": text, "elements": elements, "source_modality": "pdf"}
+            return {"text": text, "elements": elements, "source_modality": "pdf"}
+
+        # PdfReader + extract_text are synchronous and can be CPU-heavy.
+        # Run in a thread to avoid blocking the FastAPI event loop.
+        return await asyncio.to_thread(_parse_sync, path)

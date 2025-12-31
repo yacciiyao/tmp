@@ -94,7 +94,15 @@ class VocJobService:
     # Job creation APIs
     # -----------------------------
 
-    async def create_or_reuse_review_job(self, db: AsyncSession, *, site_code: str, asins: List[str], review_days: int):
+    async def create_or_reuse_review_job(
+        self,
+        db: AsyncSession,
+        *,
+        site_code: str,
+        asins: List[str],
+        review_days: int,
+        enable_ai: bool = False,
+    ):
         """Keep backward-compatible review-only job creation."""
         if not asins:
             raise AppError(code="voc.invalid_input", message="asins is empty", http_status=400)
@@ -112,6 +120,7 @@ class VocJobService:
             "site_code": site_code,
             "asins": asins,
             "review_days": int(review_days),
+            "enable_ai": bool(enable_ai),
             # keep extensibility: review-only job has no competitors/keywords by default
             "competitor_asins": [],
             "keywords": [],
@@ -147,6 +156,7 @@ class VocJobService:
         keywords: Optional[Sequence[str]] = None,
         review_days: int = 365,
         max_serp_page_num: Optional[int] = 2,
+        enable_ai: bool = False,
     ):
         """Create or reuse a VOC bundle job (reviews + market + keyword + report).
 
@@ -173,6 +183,7 @@ class VocJobService:
             "keywords": kws,
             "review_days": int(review_days),
             "max_serp_page_num": int(max_serp_page_num) if max_serp_page_num is not None else None,
+            "enable_ai": bool(enable_ai),
         }
 
         input_hash = _sha256_hex(f"voc:bundle:{site_code}:{scope_type}:{scope_value}:{_stable_json(params)}")
@@ -277,6 +288,8 @@ class VocJobService:
             max_serp_page_num = params.get("max_serp_page_num")
             max_serp_page_num = int(max_serp_page_num) if max_serp_page_num is not None else None
 
+            enable_ai = bool(params.get("enable_ai") is True)
+
             # datasets
             review_ds = None
             listing_ds = None
@@ -366,6 +379,25 @@ class VocJobService:
 
             await db.commit()
 
+            # ---------- ai summarizing (modules) ----------
+            if enable_ai:
+                try:
+                    from services.voc.voc_ai_service import VocAiService
+
+                    last_stage = "ai_summarizing.modules"
+                    await VocRepository.update_job_status(db, job_id=int(job_id), status=int(VocJobStatus.PERSISTING), stage=last_stage)
+                    await db.commit()
+
+                    ai_svc = VocAiService()
+                    await ai_svc.summarize_modules(db=db, job_id=int(job_id), module_codes=[mc for mc, _, _, _ in computed])
+                    await db.commit()
+                except Exception:
+                    # AI is best-effort. Do not fail deterministic VOC pipeline.
+                    try:
+                        await db.rollback()
+                    except Exception:
+                        pass
+
             # ---------- build report.v1 (reads outputs/evidence only) ----------
             report = await ReportV1Builder.build(db, job_id=int(job_id))
             await _persist_module(
@@ -375,6 +407,25 @@ class VocJobService:
                 evidence_rows=[],
             )
             await db.commit()
+
+            # ---------- ai summarizing (report) ----------
+            if enable_ai:
+                try:
+                    from services.voc.voc_ai_service import VocAiService
+
+                    last_stage = "ai_summarizing.report"
+                    await VocRepository.update_job_status(db, job_id=int(job_id), status=int(VocJobStatus.PERSISTING), stage=last_stage)
+                    await db.commit()
+
+                    ai_svc = VocAiService()
+                    await ai_svc.summarize_report(db=db, job_id=int(job_id))
+                    await db.commit()
+                except Exception:
+                    # best-effort
+                    try:
+                        await db.rollback()
+                    except Exception:
+                        pass
 
             # ---------- done ----------
             last_stage = "done"

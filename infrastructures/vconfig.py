@@ -45,6 +45,7 @@ class VConfig(BaseSettings):
     # ---------- Database ----------
     db_url: str = Field(..., validation_alias="DB_URL")
     sql_echo: bool = Field(False, validation_alias="SQL_ECHO")
+    db_auto_create: bool = Field(True, validation_alias="DB_AUTO_CREATE")
 
     # ---------- Auth/JWT ----------
     jwt_secret_key: str = Field(..., validation_alias="JWT_SECRET_KEY")
@@ -120,9 +121,29 @@ class VConfig(BaseSettings):
     enable_llm: bool = Field(True, validation_alias="ENABLE_LLM")
     enable_vision: bool = Field(True, validation_alias="ENABLE_VISION")
 
+    # Default LLM alias/profile id (DB flow policy can override per-flow defaults).
+    default_llm: str = Field("", validation_alias="DEFAULT_LLM")
+
     openai_api_key: str = Field("", validation_alias="OPENAI_API_KEY")
     openai_base_url: str = Field("https://api.openai.com", validation_alias="OPENAI_BASE_URL")
     openai_timeout_seconds: int = Field(60, validation_alias="OPENAI_TIMEOUT_SECONDS", ge=1)
+
+    deepseek_api_key: str = Field("", validation_alias="DEEPSEEK_API_KEY")
+    deepseek_base_url: str = Field("", validation_alias="DEEPSEEK_BASE_URL")
+    deepseek_timeout_seconds: int = Field(60, validation_alias="DEEPSEEK_TIMEOUT_SECONDS", ge=1)
+
+    qwen_api_key: str = Field("", validation_alias="QWEN_API_KEY")
+    qwen_base_url: str = Field("", validation_alias="QWEN_BASE_URL")
+    qwen_timeout_seconds: int = Field(60, validation_alias="QWEN_TIMEOUT_SECONDS", ge=1)
+
+    gemini_api_key: str = Field("", validation_alias="GEMINI_API_KEY")
+    gemini_base_url: str = Field("", validation_alias="GEMINI_BASE_URL")
+    gemini_timeout_seconds: int = Field(60, validation_alias="GEMINI_TIMEOUT_SECONDS", ge=1)
+
+    # Local LLM (e.g., Ollama)
+    ollama_base_url: str = Field("", validation_alias="OLLAMA_BASE_URL")
+    ollama_default_model: str = Field("", validation_alias="OLLAMA_DEFAULT_MODEL")
+    ollama_timeout_seconds: int = Field(60, validation_alias="OLLAMA_TIMEOUT_SECONDS", ge=1)
 
     llm_registry_dir: str = Field(str(_project_root() / "configs"), validation_alias="LLM_REGISTRY_DIR")
     llm_schema_dir: str = Field(str(_project_root() / "configs" / "schemas"), validation_alias="LLM_SCHEMA_DIR")

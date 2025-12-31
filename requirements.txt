@@ -1,3 +1,4 @@
+httpx
 aiohttp
 aiomysql==0.3.2
 annotated-doc==0.0.4

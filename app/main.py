@@ -10,8 +10,10 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse, RedirectResponse
 
 from app.routers import auth_router, rag_router, voc_router
+from app.routers import llm_models_router
 from domains.error_domain import AppError
-from infrastructures.db.orm.orm_base import AsyncSessionFactory, init_db
+from infrastructures.db.orm.orm_base import AsyncSessionFactory, init_db, close_db_engine
+from infrastructures.llm.provider_registry import close_provider_registry
 from infrastructures.db.repository.rag_repository import RagRepository
 from infrastructures.vconfig import vconfig
 from infrastructures.vlogger import vlogger
@@ -43,6 +45,10 @@ async def lifespan(_app: FastAPI):
     try:
         yield
     finally:
+        # Best-effort shutdown cleanup: close provider HTTP connection pools.
+        await close_provider_registry()
+        # Close DB engine to release connections cleanly.
+        await close_db_engine()
         vlogger.info("application shutdown")
 
 
@@ -90,6 +96,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router.router)
     app.include_router(rag_router.router)
     app.include_router(voc_router.router)
+    app.include_router(llm_models_router.router)
     app.include_router(api)
 
     @app.get("/")

@@ -77,6 +77,13 @@ async def init_db() -> None:
     from infrastructures.db.orm import user_orm  # noqa: F401
     from infrastructures.db.orm import rag_orm  # noqa: F401
     from infrastructures.db.orm import voc_orm  # noqa: F401
+    from infrastructures.db.orm import llm_orm  # noqa: F401
+
+    # NOTE: create_all is convenient for local/dev, but many production
+    # deployments prefer schema migrations (e.g., Alembic). Keep default
+    # behavior unchanged (auto-create enabled), while allowing explicit opt-out.
+    if not bool(vconfig.db_auto_create):
+        return
 
     engine, _ = _ensure_db_engine()
     async with engine.begin() as conn:

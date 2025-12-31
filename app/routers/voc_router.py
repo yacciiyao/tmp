@@ -23,6 +23,7 @@ class CreateReviewJobReq(BaseModel):
     site_code: str = Field(..., description="Marketplace/site code, e.g. US")
     asins: List[str] = Field(..., min_length=1)
     review_days: int = Field(365, ge=1, le=3650)
+    enable_ai: bool = Field(False, description="If true, generate ai_summary using LLM (best-effort)")
     run_now: bool = Field(False, description="If true, run pipeline synchronously; otherwise enqueue for worker")
 
 
@@ -33,6 +34,7 @@ class CreateVocJobReq(BaseModel):
     keywords: List[str] = Field(default_factory=list, description="Keywords for SERP analysis")
     review_days: int = Field(365, ge=1, le=3650)
     max_serp_page_num: Optional[int] = Field(2, ge=1, le=20, description="Max SERP page number to include")
+    enable_ai: bool = Field(False, description="If true, generate ai_summary using LLM (best-effort)")
     run_now: bool = Field(False, description="If true, run pipeline synchronously; otherwise enqueue for worker")
 
 
@@ -62,7 +64,13 @@ async def create_review_job(
     """
 
     svc = VocJobService()
-    job = await svc.create_or_reuse_review_job(db, site_code=req.site_code, asins=req.asins, review_days=req.review_days)
+    job = await svc.create_or_reuse_review_job(
+        db,
+        site_code=req.site_code,
+        asins=req.asins,
+        review_days=req.review_days,
+        enable_ai=bool(req.enable_ai),
+    )
 
     if req.run_now and job.status not in (int(VocJobStatus.DONE), int(VocJobStatus.FAILED)):
         await svc.run_review_job_pipeline(db=db, spider_db=spider_db, job_id=job.job_id)
@@ -102,6 +110,7 @@ async def create_voc_job(
         keywords=req.keywords,
         review_days=req.review_days,
         max_serp_page_num=req.max_serp_page_num,
+        enable_ai=bool(req.enable_ai),
     )
 
     if req.run_now and job.status not in (int(VocJobStatus.DONE), int(VocJobStatus.FAILED)):
